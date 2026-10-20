@@ -12,6 +12,8 @@ export interface Detail {
   rows: { label: string; value: string; href?: string }[];
   rowsTitle?: string;
   link?: string;
+  /** Cross-source jumps: each one re-opens this modal on another kind. */
+  related: { label: string; kind: 'event' | 'bucket' | 'issue' | 'path'; params: Record<string, string> }[];
   errors: string[];
 }
 
@@ -101,6 +103,9 @@ export async function eventDetail(name: string, range: Range): Promise<Detail> {
     }
   }
 
+  const sortedPaths = [...paths.entries()].sort((a, b) => b[1] - a[1]);
+  const topPath = sortedPaths[0]?.[0];
+
   return {
     title: name,
     subtitle: `${list.map((p) => p.label).join(' + ')} · ${range}`,
@@ -112,10 +117,11 @@ export async function eventDetail(name: string, range: Range): Promise<Detail> {
     ],
     series,
     rowsTitle: 'Top pages',
-    rows: [...paths.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([label, n]) => ({ label, value: num(n) })),
+    rows: sortedPaths.slice(0, 8).map(([label, n]) => ({ label, value: num(n) })),
+    related:
+      topPath && topPath.startsWith('/')
+        ? [{ label: `Errors on ${topPath} →`, kind: 'path' as const, params: { path: topPath } }]
+        : [],
     link: `https://eu.posthog.com/project/${list[0]?.id}/events?event=${encodeURIComponent(name)}`,
     errors,
   };
@@ -169,6 +175,7 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
       series: [],
       rowsTitle: 'Groups producing these events',
       rows,
+      related: [{ label: 'All events in this bucket →', kind: 'bucket' as const, params: { at, source: 'events' } }],
       errors,
     };
   }
@@ -211,6 +218,9 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
     series: [],
     rowsTitle: 'Top events in this bucket',
     rows: rows.map(([label, n]) => ({ label, value: num(n) })),
+    related: [
+      { label: 'Error events in this bucket →', kind: 'bucket' as const, params: { at, source: 'errors' } },
+    ],
     errors,
   };
 }
@@ -289,6 +299,17 @@ export async function issueDetail(id: string, range: Range): Promise<Detail> {
     }
   }
 
+  // Cross-source jump: the same URL's traffic in PostHog.
+  const topUrl = urls[0]?.label;
+  let topPath: string | null = null;
+  if (topUrl) {
+    try {
+      topPath = new URL(topUrl).pathname;
+    } catch {
+      topPath = topUrl.startsWith('/') ? topUrl : null;
+    }
+  }
+
   return {
     title: meta?.title ?? `Issue ${id}`,
     subtitle: meta ? `${meta.shortId} · ${meta.status} · ${range}` : range,
@@ -301,7 +322,94 @@ export async function issueDetail(id: string, range: Range): Promise<Detail> {
     series,
     rowsTitle: 'URLs',
     rows: urls,
+    related: topPath
+      ? [{ label: `Traffic for ${topPath} →`, kind: 'path' as const, params: { path: topPath } }]
+      : [],
     link: meta?.permalink,
+    errors,
+  };
+}
+
+/** One page path, viewed from both sides: PostHog traffic and Sentry errors on it. */
+export async function pathDetail(path: string, range: Range): Promise<Detail> {
+  const list = projects();
+  const window = hours(range);
+  const hourly = isHourly(range);
+  const bucketExpr = hourly ? 'toStartOfHour(timestamp)' : 'toDate(timestamp)';
+  // Traffic means PAGEVIEWS: counting every event on the path (vitals, autocapture) made the
+  // stat read as visits when it was really event volume.
+  const where = `event = '$pageview' AND properties.$pathname = '${esc(path)}' AND timestamp >= now() - INTERVAL ${window} HOUR`;
+  const errors: string[] = [];
+
+  const per: Record<string, Rows> = {};
+  let users = 0;
+  for (const project of list) {
+    try {
+      const [series, distinct] = await Promise.all([
+        hogql(
+          project.id,
+          `SELECT ${bucketExpr} AS b, count() AS n FROM events WHERE ${where} GROUP BY b ORDER BY b`
+        ),
+        hogql(project.id, `SELECT count(DISTINCT distinct_id) AS u FROM events WHERE ${where}`),
+      ]);
+      per[project.key] = series.rows;
+      users += Number(distinct.rows[0]?.[0] ?? 0);
+    } catch (err) {
+      errors.push(`${project.key}: ${(err as Error).message}`);
+    }
+  }
+
+  const series = mergeSeries(per, hourly);
+  const pageviews = series.reduce((n, p) => n + p.count, 0);
+
+  const { org } = sentryTarget();
+  const match = `url:*${path}*`;
+  let groups: { label: string; value: string }[] = [];
+  let groupLinks: Detail['related'] = [];
+  let errorEvents: number | null = null;
+
+  try {
+    const grouped = await sentryApi<{ data?: { issue: string; 'issue.id': number; 'count()': number }[] }>(
+      `/organizations/${org}/events/`,
+      {
+        dataset: 'errors',
+        field: ['issue', 'count()'],
+        query: match,
+        statsPeriod: range,
+        sort: '-count()',
+        per_page: 10,
+      }
+    );
+    const rowsData = grouped.data ?? [];
+    groups = rowsData.map((r) => ({ label: r.issue, value: num(r['count()']) }));
+    groupLinks = rowsData.slice(0, 3).map((r) => ({
+      label: `${r.issue} →`,
+      kind: 'issue' as const,
+      params: { id: String(r['issue.id']) },
+    }));
+
+    const scalar = await sentryApi<{ data?: Record<string, number>[] }>(
+      `/organizations/${org}/events/`,
+      { dataset: 'errors', field: 'count()', query: match, statsPeriod: range }
+    );
+    errorEvents = scalar.data?.[0]?.['count()'] ?? null;
+  } catch (err) {
+    errors.push(`sentry: ${(err as Error).message}`);
+  }
+
+  return {
+    title: path,
+    subtitle: `PostHog traffic + Sentry errors · ${range}`,
+    stats: [
+      { label: 'Pageviews', value: num(pageviews) },
+      { label: 'Distinct users (summed)', value: num(users) },
+      { label: 'Error events', value: num(errorEvents) },
+      { label: 'Error groups', value: num(groups.length) },
+    ],
+    series,
+    rowsTitle: 'Error groups on this page',
+    rows: groups,
+    related: groupLinks,
     errors,
   };
 }

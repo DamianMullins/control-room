@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { cached } from '#lib/server/cache.js';
-import { bucketDetail, eventDetail, issueDetail } from '#lib/server/detail.js';
+import { bucketDetail, eventDetail, issueDetail, pathDetail } from '#lib/server/detail.js';
 import { DEFAULT_RANGE, isRange } from '#lib/server/range.js';
 import type { RequestHandler } from './$types';
 
@@ -34,6 +34,13 @@ export const GET: RequestHandler = async ({ url }) => {
     const id = url.searchParams.get('id');
     if (!id || !/^\d+$/.test(id)) throw error(400, 'bad issue id');
     return json(await cached(`detail:issue:${range}:${id}`, TTL, () => issueDetail(id, range)));
+  }
+
+  if (kind === 'path') {
+    const path = url.searchParams.get('path');
+    // A page path only: no scheme, host or quotes ever reach a SQL string.
+    if (!path || path.length > 200 || !/^\/[\w\-./]*$/.test(path)) throw error(400, 'bad path');
+    return json(await cached(`detail:path:${range}:${path}`, TTL, () => pathDetail(path, range)));
   }
 
   throw error(400, 'unknown kind');

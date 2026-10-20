@@ -40,7 +40,10 @@
 
   // One endpoint, three kinds. The server caches each answer for 5 minutes, so reopening a
   // row you just looked at costs no upstream reads.
-  async function open(kind: 'event' | 'bucket' | 'issue', params: Record<string, string>) {
+  async function open(
+    kind: 'event' | 'bucket' | 'issue' | 'path',
+    params: Record<string, string>
+  ) {
     const qs = new URLSearchParams({ kind, range, ...params });
     loading = true;
     failed = null;
@@ -372,6 +375,16 @@
             </ul>
           {/if}
 
+          {#if detail.related.length}
+            <div class="related">
+              {#each detail.related as r}
+                <button type="button" class="relbtn" onclick={() => open(r.kind, r.params)}>
+                  {r.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+
           {#if detail.link}
             <a class="ext" href={detail.link} target="_blank" rel="noreferrer">Open in source →</a>
           {/if}
@@ -532,6 +545,9 @@
   .mbar { width: 100%; min-height: 1px; background: #58a6ff; border-radius: 1px; }
   .rows.plain li { display: block; }
   .ext { display: inline-block; margin-top: 14px; font-size: 12px; }
+  .related { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .relbtn { padding: 5px 10px; border: 1px solid #30363d; border-radius: 999px; background: #21262d; color: #7cc4ff; font: inherit; font-size: 12px; cursor: pointer; }
+  .relbtn:hover { border-color: #1f6feb; background: #1f6feb33; }
 
   @media (max-width: 860px) {
     .kpis, .metrics { grid-template-columns: repeat(2, 1fr); }
