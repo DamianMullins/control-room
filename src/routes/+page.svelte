@@ -13,7 +13,12 @@
   const colour = (i: number): string => palette[i % palette.length];
 
   const maxDaily = $derived(Math.max(1, ...ph.series.map((d) => d.total)));
-  const maxErrors = $derived(Math.max(1, ...se.errorVolume.series.map((d) => d.count)));
+  const maxGroup = $derived(
+    Math.max(1, ...se.topIssues.map((i) => i.count), ...se.otherIssues.map((i) => i.count))
+  );
+  // Log scale: the ignored crawler groups are ~200× the unresolved ones, so a linear bar turns
+  // every real bug into an invisible sliver. Ordering survives, magnitudes don't — read the numbers.
+  const barWidth = $derived((n: number): number => (Math.log1p(n) / Math.log1p(maxGroup)) * 100);
   const maxEvent = $derived(Math.max(1, ...ph.topEvents.map((e) => e.total)));
 
   const nf = new Intl.NumberFormat('en-GB');
@@ -144,35 +149,17 @@
     </article>
 
     <article class="card">
-      <h2>Error events per {bucketUnit} · {range}</h2>
-      <div class="chart small" class:dense={range === '24h'}>
-        {#each se.errorVolume.series as d}
-          <div class="col">
-            <div class="stack">
-              <div
-                class="bar"
-                style="height:{(d.count / maxErrors) * 100}%; background:#f0883e"
-              ></div>
-            </div>
-            <span class="tick">{d.label}</span>
-            <div class="tip" role="tooltip">
-              <b>{d.full}</b>
-              <span>{num(d.count)} error events</span>
-            </div>
-          </div>
-        {/each}
-      </div>
-      <p class="note">
-        counts events, not issues — ignore-scan noise is included, which is why it dwarfs the
-        unresolved count below
-      </p>
+      <h2>Error events by issue group · {range}</h2>
 
-      <h3>Unresolved · {se.unresolved.count} in {range}</h3>
-      <ul class="rows">
+      <h3>Unresolved · {se.unresolved.count}</h3>
+      <ul class="rows groups">
         {#each se.topIssues as i}
           <li>
             <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
             <span class="tag {i.status}">{i.status}</span>
+            <span class="bar-mini"
+              ><i style="width:{barWidth(i.count)}%; background:#f0883e"></i></span
+            >
             <b>{num(i.count)}</b>
           </li>
         {:else}
@@ -181,17 +168,26 @@
       </ul>
 
       {#if se.otherIssues.length}
-        <h3>Not unresolved — what the error chart counts</h3>
-        <ul class="rows dim">
+        <h3>Not unresolved</h3>
+        <ul class="rows groups dim">
           {#each se.otherIssues as i}
             <li>
               <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
               <span class="tag {i.status}">{i.status}</span>
+              <span class="bar-mini"
+                ><i style="width:{barWidth(i.count)}%; background:#6e7681"></i></span
+              >
               <b>{num(i.count)}</b>
             </li>
           {/each}
         </ul>
       {/if}
+
+      <p class="note">
+        Bars are log-scaled so small groups stay visible — read the numbers, not the lengths. These
+        groups account for {num(se.attribution.shown)} of {num(se.attribution.total)} error events
+        in {range}.
+      </p>
     </article>
   </section>
 
@@ -257,13 +253,10 @@
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-left: 6px; }
 
   .chart { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding-top: 8px; }
-  .chart.small { height: 120px; }
   .col { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
   .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 100%; height: 100%; }
   .bar { width: 100%; min-height: 1px; }
   .tick { font-size: 10px; color: #6e7681; }
-  /* 24 hourly labels will not fit in the narrow chart — thin every other one. */
-  .chart.dense .col:nth-child(2n) .tick { visibility: hidden; }
   .rows li.empty { color: #6e7681; font-size: 12px; display: block; }
   .rows.dim a, .rows.dim b { color: #8b949e; }
 
@@ -296,6 +289,9 @@
 
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .rows li { display: grid; grid-template-columns: 1fr 90px 56px; align-items: center; gap: 10px; font-size: 13px; }
+  /* Issue rows carry a bar between the status pill and the count, sized by event volume. */
+  .rows.groups li { grid-template-columns: 1fr 92px 140px 46px; }
+  .rows.groups .tag { justify-self: start; white-space: nowrap; font-size: 9.5px; padding: 1px 5px; }
   .rows code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rows b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
   .bar-mini { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }

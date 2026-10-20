@@ -30,18 +30,28 @@ export interface VolumePoint {
   count: number;
 }
 
+export interface IssueGroup {
+  shortId: string;
+  title: string;
+  status: string;
+  permalink: string;
+  count: number;
+}
+
 export interface SentryTiles {
   project: string;
   region: string;
-  topIssues: SentryIssue[];
-  /** Ignored/resolved groups, highest-frequency first — the noise behind the error chart. */
-  otherIssues: SentryIssue[];
+  topIssues: IssueGroup[];
+  /** Ignored/resolved groups, highest-volume first — the noise behind the error chart. */
+  otherIssues: IssueGroup[];
+  /** How much of the window's error volume the listed groups account for. */
+  attribution: { shown: number; total: number | null };
   /**
    * Issue GROUPS, not events: `count` is how many groups are unresolved and `events`
    * is what those groups contain. The error-volume tile counts EVENTS, so the two
    * numbers are different units on purpose.
    */
-  unresolved: { count: number; events: number; issues: SentryIssue[] };
+  unresolved: { count: number; events: number; issues: IssueGroup[] };
   errorVolume: { d24h: number | null; total: number | null; series: VolumePoint[] };
   metrics: SentryMetric[];
   /** Successful API calls made for this render — the Sentry counterpart to PostHog's bytes. */
@@ -60,7 +70,7 @@ interface RawIssue {
   permalink: string;
 }
 
-type Params = Record<string, string | number | undefined | null>;
+type Params = Record<string, string | number | string[] | undefined | null>;
 
 export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryTiles> {
   const errors: string[] = [];
@@ -75,7 +85,10 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
 
     const url = new URL(`${BASE}${path}`);
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+      if (v === undefined || v === null) continue;
+      // Repeated params (field=issue&field=count()) carry a string[].
+      if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, item);
+      else url.searchParams.set(k, String(v));
     }
 
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -111,6 +124,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
     region: BASE.includes('de.sentry.io') ? 'DE' : 'US',
     topIssues: [],
     otherIssues: [],
+    attribution: { shown: 0, total: null },
     unresolved: { count: 0, events: 0, issues: [] },
     errorVolume: { d24h: null, total: null, series: [] },
     metrics: [],
@@ -137,32 +151,51 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
     api<RawIssue[]>(`/projects/${ORG}/${PROJECT}/issues/`, {
       query: issueWindow,
       statsPeriod: issueStatsPeriod,
-      limit: 10,
+      limit: 100,
       sort: 'freq',
     })
   );
-  if (issues) {
-    out.topIssues = issues.map(fmtIssue);
-    // Everything that is NOT unresolved: the crawler noise the error chart is full of.
-    out.otherIssues = out.topIssues.filter((i) => i.status !== 'unresolved').slice(0, 3);
+
+  // Metadata (title, status, link) per group, so the volume bars can be labelled.
+  const meta = new Map<string, IssueGroup>();
+  for (const raw of issues ?? []) {
+    const issue = fmtIssue(raw);
+    meta.set(issue.shortId, {
+      shortId: issue.shortId,
+      title: issue.title,
+      status: issue.status,
+      permalink: issue.permalink,
+      count: issue.count,
+    });
   }
 
-  const unresolved = await settle('unresolved', () =>
-    api<RawIssue[]>(`/projects/${ORG}/${PROJECT}/issues/`, {
-      query: `is:unresolved ${issueWindow}`,
-      statsPeriod: issueStatsPeriod,
-      limit: 25,
-      sort: 'freq',
-    })
+  // Event counts per group IN THIS WINDOW. `issue.count` is the group's lifetime total, so
+  // bars built from it can add up to more events than the window holds — this grouped events
+  // query is the only honest source for "how many of the window's errors came from group X".
+  const grouped = await settle('groups', () =>
+    api<{ data?: { issue: string; 'issue.id': number; 'count()': number }[] }>(
+      `/organizations/${ORG}/events/`,
+      { dataset: 'errors', field: ['issue', 'count()'], statsPeriod: range, sort: '-count()', per_page: 25 }
+    )
   );
-  if (unresolved) {
-    out.unresolved.count = unresolved.length;
-    out.unresolved.events = unresolved.reduce((n, i) => n + Number(i.count), 0);
-    out.unresolved.issues = unresolved.slice(0, 5).map(fmtIssue);
-    // The rendered list must be the same set the KPI counts, or the tile contradicts itself:
-    // sorting all statuses by frequency drops the lowest-count unresolved group off the end.
-    out.topIssues = unresolved.map(fmtIssue).slice(0, 10);
-  }
+
+  const groups: IssueGroup[] = (grouped?.data ?? []).map((row) => {
+    const known = meta.get(row.issue);
+    return {
+      shortId: row.issue,
+      title: known?.title ?? row.issue,
+      status: known?.status ?? 'unknown',
+      permalink: known?.permalink ?? '',
+      count: row['count()'],
+    };
+  });
+
+  // The rendered lists must be the same sets the KPI counts, or the tile contradicts itself.
+  out.topIssues = groups.filter((g) => g.status === 'unresolved');
+  out.otherIssues = groups.filter((g) => g.status !== 'unresolved').slice(0, 6);
+  out.unresolved.count = out.topIssues.length;
+  out.unresolved.events = out.topIssues.reduce((n, g) => n + g.count, 0);
+  out.unresolved.issues = out.topIssues.slice(0, 5);
 
   // Error volume: an unfiltered EVENTS count, which is why it dwarfs the issue count —
   // it includes every event in every group, resolved and ignored ones included.
@@ -216,5 +249,9 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   }
 
   out.calls = calls;
+  out.attribution = {
+    shown: [...out.topIssues, ...out.otherIssues].reduce((n, i) => n + i.count, 0),
+    total: out.errorVolume.total,
+  };
   return out;
 }
