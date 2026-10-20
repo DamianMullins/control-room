@@ -4,13 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@11.24.0",
   "imports": {
     "#lib/*": "./src/lib/*"
   },
   "scripts": {
+    "prepare": "svelte-kit sync",
     "dev": "vite dev",
     "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
     "start": "node build"
   },
