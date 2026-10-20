@@ -1,7 +1,7 @@
 // Detail payloads for the click-through modal: one event, one chart bucket, or one issue group.
 // Everything is shaped into the same `Detail` object so the modal has a single renderer.
 import { hogql, projects } from '#lib/server/posthog.js';
-import { sentryApi, sentryTarget } from '#lib/server/sentry.js';
+import { sentryApi, sentryProjectByKey, sentryProjects } from '#lib/server/sentry.js';
 import { hours, isHourly, type Range } from '#lib/server/range.js';
 
 export interface Detail {
@@ -145,29 +145,38 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
   ).toISOString();
 
   if (source === 'errors') {
-    const { org } = sentryTarget();
     let rows: { label: string; value: string }[] = [];
     let total = 0;
-    try {
-      const body = await sentryApi<{ data?: { issue: string; 'count()': number }[] }>(
-        `/organizations/${org}/events/`,
-        {
-          dataset: 'errors',
-          field: ['issue', 'count()'],
-          start: startIso,
-          end: endIso,
-          sort: '-count()',
-          per_page: 10,
+    // Both orgs' events land in this bucket; query each and merge.
+    for (const ref of sentryProjects()) {
+      try {
+        const body = await sentryApi<{ data?: { issue: string; 'count()': number }[] }>(
+          ref,
+          `/organizations/${ref.org}/events/`,
+          {
+            dataset: 'errors',
+            field: ['issue', 'count()'],
+            start: startIso,
+            end: endIso,
+            sort: '-count()',
+            per_page: 10,
+          }
+        );
+        for (const r of body.data ?? []) {
+          rows.push({
+            label: `${r.issue}${ref.key === sentryProjects()[0]?.key ? '' : ` (${ref.label})`}`,
+            value: num(r['count()']),
+          });
+          total += r['count()'];
         }
-      );
-      rows = (body.data ?? []).map((r) => ({ label: r.issue, value: num(r['count()']) }));
-      total = (body.data ?? []).reduce((n, r) => n + r['count()'], 0);
-    } catch (err) {
-      errors.push((err as Error).message);
+      } catch (err) {
+        errors.push(`${ref.key}: ${(err as Error).message}`);
+      }
     }
+    rows = rows.sort((a, b) => Number(b.value.replace(/,/g, '')) - Number(a.value.replace(/,/g, '')));
     return {
       title: `Error events · ${at}`,
-      subtitle: `Sentry · ${range}`,
+      subtitle: `Sentry · ${sentryProjects().map((p) => p.label).join(' + ')} · ${range}`,
       stats: [
         { label: 'Events in bucket', value: num(total) },
         { label: 'Issue groups', value: num(rows.length) },
@@ -175,7 +184,13 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
       series: [],
       rowsTitle: 'Groups producing these events',
       rows,
-      related: [{ label: 'All events in this bucket →', kind: 'bucket' as const, params: { at, source: 'events' } }],
+      related: [
+        {
+          label: 'All events in this bucket →',
+          kind: 'bucket' as const,
+          params: { at, source: 'events' },
+        },
+      ],
       errors,
     };
   }
@@ -226,8 +241,14 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
 }
 
 /** One Sentry issue group: its trend, its URLs, and its lifetime counters. */
-export async function issueDetail(id: string, range: Range): Promise<Detail> {
-  const { org } = sentryTarget();
+export async function issueDetail(
+  id: string,
+  projectKey: string,
+  range: Range,
+  hints: { shortId?: string; title?: string } = {}
+): Promise<Detail> {
+  const ref = sentryProjectByKey(projectKey);
+  const org = ref.org;
   const hourly = isHourly(range);
   const errors: string[] = [];
 
@@ -245,20 +266,30 @@ export async function issueDetail(id: string, range: Range): Promise<Detail> {
   let meta: RawIssue | null = null;
   try {
     // Issue detail is org-scoped; /projects/{org}/{project}/issues/{id}/ answers 404.
-    meta = await sentryApi<RawIssue>(`/issues/${id}/`);
+    meta = await sentryApi<RawIssue>(ref, `/issues/${id}/`);
   } catch (err) {
-    errors.push(`issue: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    errors.push(
+      message.includes('403')
+        ? `${ref.label}: the token can't read this org's issues (needs project:read) — showing event data only`
+        : `issue: ${message}`
+    );
   }
 
+  // Without the issues API (a token lacking project:read answers 403), fall back to the
+  // short id carried by the row that opened this modal — discover still answers everything.
+  const shortId = meta?.shortId ?? hints.shortId;
+
   let series: { label: string; full: string; count: number }[] = [];
-  if (meta) {
+  if (shortId) {
     try {
       const body = await sentryApi<{ data?: [number, { count?: number }[]][] }>(
+        ref,
         `/organizations/${org}/events-stats/`,
         {
           dataset: 'errors',
           yAxis: 'count()',
-          query: `issue:${meta.shortId}`,
+          query: `issue:${shortId}`,
           statsPeriod: range,
           interval: hourly ? '1h' : '1d',
         }
@@ -277,14 +308,15 @@ export async function issueDetail(id: string, range: Range): Promise<Detail> {
   }
 
   let urls: { label: string; value: string }[] = [];
-  if (meta) {
+  if (shortId) {
     try {
       const body = await sentryApi<{ data?: { url?: string; 'count()': number }[] }>(
+        ref,
         `/organizations/${org}/events/`,
         {
           dataset: 'errors',
           field: ['url', 'count()'],
-          query: `issue:${meta.shortId}`,
+          query: `issue:${shortId}`,
           statsPeriod: range,
           sort: '-count()',
           per_page: 8,
@@ -310,14 +342,18 @@ export async function issueDetail(id: string, range: Range): Promise<Detail> {
     }
   }
 
+  // Without the issues API there is no lastSeen; the newest non-empty bucket is the honest
+  // substitute ("last event in this window").
+  const lastActive = [...series].reverse().find((p) => p.count > 0)?.full;
+
   return {
-    title: meta?.title ?? `Issue ${id}`,
-    subtitle: meta ? `${meta.shortId} · ${meta.status} · ${range}` : range,
+    title: meta?.title ?? hints.title ?? `Issue ${id}`,
+    subtitle: `${shortId ?? id} · ${meta?.status ?? 'status unavailable'} · ${range}`,
     stats: [
       { label: `Events · ${range}`, value: num(series.reduce((n, p) => n + p.count, 0)) },
       { label: 'All-time events', value: num(meta ? Number(meta.count) : null) },
       { label: 'Users (all time)', value: num(meta?.userCount ?? null) },
-      { label: 'Last seen', value: meta?.lastSeen.slice(0, 16).replace('T', ' ') ?? '—' },
+      { label: 'Last seen', value: meta?.lastSeen.slice(0, 16).replace('T', ' ') ?? lastActive ?? '—' },
     ],
     series,
     rowsTitle: 'URLs',
@@ -362,39 +398,43 @@ export async function pathDetail(path: string, range: Range): Promise<Detail> {
   const series = mergeSeries(per, hourly);
   const pageviews = series.reduce((n, p) => n + p.count, 0);
 
-  const { org } = sentryTarget();
   const match = `url:*${path}*`;
   let groups: { label: string; value: string }[] = [];
   let groupLinks: Detail['related'] = [];
-  let errorEvents: number | null = null;
+  let errorEvents = 0;
 
-  try {
-    const grouped = await sentryApi<{ data?: { issue: string; 'issue.id': number; 'count()': number }[] }>(
-      `/organizations/${org}/events/`,
-      {
+  for (const ref of sentryProjects()) {
+    try {
+      const grouped = await sentryApi<
+        { data?: { issue: string; 'issue.id': number; 'count()': number }[] }
+      >(ref, `/organizations/${ref.org}/events/`, {
         dataset: 'errors',
         field: ['issue', 'count()'],
         query: match,
         statsPeriod: range,
         sort: '-count()',
         per_page: 10,
-      }
-    );
-    const rowsData = grouped.data ?? [];
-    groups = rowsData.map((r) => ({ label: r.issue, value: num(r['count()']) }));
-    groupLinks = rowsData.slice(0, 3).map((r) => ({
-      label: `${r.issue} →`,
-      kind: 'issue' as const,
-      params: { id: String(r['issue.id']) },
-    }));
+      });
+      const rowsData = grouped.data ?? [];
+      const suffix = ref.key === sentryProjects()[0]?.key ? '' : ` (${ref.label})`;
+      groups.push(...rowsData.map((r) => ({ label: `${r.issue}${suffix}`, value: num(r['count()']) })));
+      groupLinks.push(
+        ...rowsData.slice(0, 3).map((r) => ({
+          label: `${r.issue} →`,
+          kind: 'issue' as const,
+          params: { id: String(r['issue.id']), project: ref.key },
+        }))
+      );
 
-    const scalar = await sentryApi<{ data?: Record<string, number>[] }>(
-      `/organizations/${org}/events/`,
-      { dataset: 'errors', field: 'count()', query: match, statsPeriod: range }
-    );
-    errorEvents = scalar.data?.[0]?.['count()'] ?? null;
-  } catch (err) {
-    errors.push(`sentry: ${(err as Error).message}`);
+      const scalar = await sentryApi<{ data?: Record<string, number>[] }>(
+        ref,
+        `/organizations/${ref.org}/events/`,
+        { dataset: 'errors', field: 'count()', query: match, statsPeriod: range }
+      );
+      errorEvents += scalar.data?.[0]?.['count()'] ?? 0;
+    } catch (err) {
+      errors.push(`${ref.key}: ${(err as Error).message}`);
+    }
   }
 
   return {

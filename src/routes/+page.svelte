@@ -91,7 +91,7 @@
       <h1>Control room</h1>
       <p class="sub">
         PostHog ({projects.length} project{projects.length === 1 ? '' : 's'}, merged) · Sentry
-        {se.project} ({se.region})
+        {se.projects.map((p) => `${p.label} (${p.region})`).join(' + ')}
       </p>
     </div>
     <div class="meta">
@@ -139,13 +139,28 @@
       <p class="split">
         {num(se.unresolved.events)} events across those issues · {range}
       </p>
+      <p class="split">
+        {#each se.projects as p, i}
+          <span class="dot" style="background:{colour(i)}"></span>{num(
+            se.unresolved.byProject[p.key]
+          )}
+          {p.label.toLowerCase()}
+        {/each}
+      </p>
     </article>
 
     <article class="card">
       <h2>Error events · 24h</h2>
       <p class="big">{num(se.errorVolume.d24h)}</p>
       <p class="split">{num(se.errorVolume.total)} in {range}</p>
-      <p class="note">every error event, ignored issues included</p>
+      <p class="split">
+        {#each se.projects as p, i}
+          <span class="dot" style="background:{colour(i)}"></span>{num(
+            se.errorVolume.d24hByProject[p.key]
+          )}
+          {p.label.toLowerCase()}
+        {/each}
+      </p>
     </article>
   </section>
 
@@ -244,9 +259,10 @@
             <button
               type="button"
               class="rowbtn row4"
-              onclick={() => open('issue', { id: String(i.id) })}
+              onclick={() =>
+                open('issue', { id: String(i.id), project: i.projectKey, shortId: i.shortId, title: i.title })}
             >
-              <span class="iwrap">{i.title}</span>
+              <span class="iwrap"><span class="ititle">{i.title}</span><span class="proj">{i.projectLabel}</span></span>
               <span class="tag {i.status}">{i.status}</span>
               <span class="bar-mini"><i style="width:{barWidth(i.count)}%; background:#f0883e"></i></span>
               <b>{num(i.count)}</b>
@@ -265,9 +281,10 @@
               <button
                 type="button"
                 class="rowbtn row4 dim"
-                onclick={() => open('issue', { id: String(i.id) })}
+                onclick={() =>
+                  open('issue', { id: String(i.id), project: i.projectKey, shortId: i.shortId, title: i.title })}
               >
-                <span class="iwrap">{i.title}</span>
+                <span class="iwrap"><span class="ititle">{i.title}</span><span class="proj">{i.projectLabel}</span></span>
                 <span class="tag {i.status}">{i.status}</span>
                 <span class="bar-mini"><i style="width:{barWidth(i.count)}%; background:#6e7681"></i></span>
                 <b>{num(i.count)}</b>
@@ -291,9 +308,13 @@
       {#each se.metrics as m}
         <div class="metric">
           <span class="label">{m.label}</span>
-          <span class="value">{dec(m.value)}</span>
+          {#each se.projects.filter((p) => m.byProject[p.key] !== undefined) as p}
+            <span class="value">{dec(m.byProject[p.key])}<i class="pname">{p.label}</i></span>
+          {/each}
           <span class="period">{range}</span>
         </div>
+      {:else}
+        <p class="note">No Application Metrics are configured for these projects.</p>
       {/each}
     </div>
   </section>
@@ -495,17 +516,22 @@
   .tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; border: 1px solid #30363d; border-radius: 999px; padding: 1px 6px; text-align: center; }
   .tag.unresolved { color: #f0883e; border-color: #6b3b0f; }
   .tag.ignored { color: #6e7681; }
+  .tag.unknown { color: #6e7681; border-style: dashed; }
 
   .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .metric { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
   .metric .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
   .metric .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .metric .period { font-size: 11px; color: #6e7681; }
+  .metric .pname { margin-left: 6px; font-size: 10px; font-style: normal; color: #6e7681; }
 
   footer { margin-top: 20px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: #6e7681; }
   .warn { color: #f0883e; }
 
-  .iwrap { overflow: hidden; text-overflow: ellipsis; }
+  .iwrap { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+  /* One line per row: the title truncates, the project tag and status stay visible. */
+  .ititle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj { flex: none; font-size: 9.5px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em; }
 
   /* Chart bars are buttons too: click a bucket to see what was inside it. */
   .col.clickable, .scol.clickable { cursor: pointer; }

@@ -32,8 +32,21 @@ export const GET: RequestHandler = async ({ url }) => {
 
   if (kind === 'issue') {
     const id = url.searchParams.get('id');
+    const projectKey = url.searchParams.get('project');
     if (!id || !/^\d+$/.test(id)) throw error(400, 'bad issue id');
-    return json(await cached(`detail:issue:${range}:${id}`, TTL, () => issueDetail(id, range)));
+    // Issue ids are per org — the same number is meaningless without its project.
+    if (!projectKey || !/^[\w-]+$/.test(projectKey)) throw error(400, 'project required');
+
+    // Hints let a project whose issues API is forbidden still render something useful.
+    const shortId = url.searchParams.get('shortId') ?? undefined;
+    const title = url.searchParams.get('title') ?? undefined;
+    if (shortId && !/^[A-Za-z0-9-]{1,40}$/.test(shortId)) throw error(400, 'bad shortId');
+
+    return json(
+      await cached(`detail:issue:${range}:${projectKey}:${id}:${shortId ?? ''}`, TTL, () =>
+        issueDetail(id, projectKey, range, { shortId, title: title?.slice(0, 200) })
+      )
+    );
   }
 
   if (kind === 'path') {

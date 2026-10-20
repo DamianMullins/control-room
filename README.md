@@ -13,7 +13,9 @@ billing limits are per org — there is no query that spans them. So this app fa
 - `src/lib/server/posthog.js` — one HogQL query per tile, run against every configured
   project, merged by project key. Projects come from `POSTHOG_PROJECTS`.
 - `src/lib/server/sentry.js` — issues, error volume (`dataset=errors`) and Application
-  Metrics (`dataset=tracemetrics`) from whichever Sentry region you point it at.
+  Metrics (`dataset=tracemetrics`) from **any number of Sentry projects, each in its own org
+  and region** (`SENTRY_PROJECTS`). The region is part of every endpoint, so a DE org and a
+  US org cannot share one base URL — each entry carries its own.
 - `src/lib/server/cache.js` — 5-minute in-process cache. `/query/` draws from an hourly
   byte-read budget and Sentry rate-limits per token, so a page refresh must never fan out
   to the APIs.
@@ -34,9 +36,19 @@ pnpm build && pnpm start
 | --- | --- |
 | `POSTHOG_PERSONAL_API_KEY` | PostHog user settings → personal API keys, needs **Query Read** |
 | `POSTHOG_PROJECTS` | `key:label:project_id`, comma separated — e.g. `web:Web:12345,app:App:67890` |
-| `SENTRY_AUTH_TOKEN` | Sentry user token with `event:read` + `org:read` |
-| `SENTRY_ORG` / `SENTRY_PROJECT` | Slugs from your Sentry project URL |
-| `SENTRY_BASE_URL` | Region base: `https://de.sentry.io/api/0` (EU/DE) or `https://sentry.io/api/0` (US) |
+| `SENTRY_AUTH_TOKEN` | Sentry token with `event:read` + `org:read`; used for any project without its own |
+| `SENTRY_PROJECTS` | `key:label:org:project:region`, comma separated — region is `de` or `us` |
+| `SENTRY_TOKEN_<KEY>` | Optional per-org token (e.g. `SENTRY_TOKEN_APP`) — needed when projects live in different orgs |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_BASE_URL` | Legacy single-project setup, still honoured when `SENTRY_PROJECTS` is unset |
+
+Two things the Sentry APIs make you notice:
+
+- **The issues endpoint needs `project:read` on top of `event:read`.** Without it a project
+  answers **403** and you get its error volumes with no titles or statuses. This app then
+  harvests titles from the discover dataset (`field=issue&field=title`) and marks the status
+  `unknown`, so the page keeps working while telling you what it cannot see.
+- **Metrics are declared per project key** in `src/lib/server/sentry.ts`. A project with no
+  entry simply has no metric rows, rather than four rows of em-dashes.
 
 `vite.config.js` loads `.env` into `process.env` in dev; adapter-node reads the real
 environment in production. `src/lib/config.js` is the single place env is read.
