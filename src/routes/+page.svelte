@@ -7,13 +7,14 @@
   const se = $derived(data.sentry);
   // Project list comes from the API response, so the UI follows POSTHOG_PROJECTS.
   const projects = $derived(data.posthog.projects ?? []);
+  const range = $derived(data.range);
 
   const palette = ['#58a6ff', '#3fb950', '#f0883e', '#a371f7', '#e3b341'];
   const colour = (i: number): string => palette[i % palette.length];
 
-  const maxDaily = $derived(Math.max(1, ...ph.daily14d.map((d) => d.total)));
+  const maxDaily = $derived(Math.max(1, ...ph.daily.map((d) => d.total)));
   const maxErrors = $derived(Math.max(1, ...se.errorVolume.daily.map((d) => d.count)));
-  const maxEvent = $derived(Math.max(1, ...ph.topEvents7d.map((e) => e.total)));
+  const maxEvent = $derived(Math.max(1, ...ph.topEvents.map((e) => e.total)));
 
   const nf = new Intl.NumberFormat('en-GB');
   const num = (v: number | null | undefined): string =>
@@ -39,6 +40,15 @@
       </p>
     </div>
     <div class="meta">
+      <nav class="ranges" aria-label="Time range">
+        {#each data.ranges as option}
+          <a
+            href="?range={option}"
+            class:active={option === range}
+            aria-current={option === range ? 'true' : undefined}>{option}</a
+          >
+        {/each}
+      </nav>
       <span class="pill" class:live={!stale}>{stale ? 'cached' : 'fresh'}</span>
       <span class="dim">{new Date(data.renderedAt).toLocaleTimeString('en-GB')}</span>
     </div>
@@ -46,21 +56,23 @@
 
   <section class="kpis">
     <article class="card">
-      <h2>Events · 30d</h2>
-      <p class="big">{num(ph.totals30d.total)}</p>
+      <h2>Events · {range}</h2>
+      <p class="big">{num(ph.totals.total)}</p>
       <p class="split">
         {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals30d.byProject[p.key])} {p.label.toLowerCase()}
+          <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals.byProject[p.key])}
+          {p.label.toLowerCase()}
         {/each}
       </p>
     </article>
 
     <article class="card">
-      <h2>Distinct users · 30d</h2>
-      <p class="big">{num(ph.users30d.total)}</p>
+      <h2>Distinct users · {range}</h2>
+      <p class="big">{num(ph.users.total)}</p>
       <p class="split">
         {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.users30d.byProject[p.key])} {p.label.toLowerCase()}
+          <span class="dot" style="background:{colour(i)}"></span>{num(ph.users.byProject[p.key])}
+          {p.label.toLowerCase()}
         {/each}
       </p>
       <p class="note">summed per project — the same person in two projects counts twice</p>
@@ -69,32 +81,46 @@
     <article class="card">
       <h2>Unresolved issues</h2>
       <p class="big" class:warn={se.unresolved.count > 0}>{num(se.unresolved.count)}</p>
-      <p class="split">Sentry · 14d window</p>
+      <p class="split">
+        {num(se.unresolved.events)} events across those issues · {range}
+      </p>
     </article>
 
     <article class="card">
-      <h2>Errors · 24h</h2>
+      <h2>Error events · 24h</h2>
       <p class="big">{num(se.errorVolume.d24h)}</p>
-      <p class="split">{num(se.errorVolume.d30d)} in 30d</p>
+      <p class="split">{num(se.errorVolume.total)} in {range}</p>
+      <p class="note">every error event, ignored issues included</p>
     </article>
   </section>
 
   <section class="card">
     <h2>
-      Events per day · last 14 days
+      Events per day · {range}
       <span class="legend">
         {#each projects as p, i}<i style="background:{colour(i)}"></i>{p.label}{/each}
       </span>
     </h2>
     <div class="chart">
-      {#each ph.daily14d as d}
-        <div class="col" title="{d.day}: {num(d.total)}">
+      {#each ph.daily as d}
+        <div class="col">
           <div class="stack">
             {#each projects as p, i}
-              <div class="bar" style="height:{(d.byProject[p.key] / maxDaily) * 100}%; background:{colour(i)}"></div>
+              <div
+                class="bar"
+                style="height:{(d.byProject[p.key] / maxDaily) * 100}%; background:{colour(i)}"
+              ></div>
             {/each}
           </div>
           <span class="tick">{d.day.slice(8)}</span>
+
+          <div class="tip" role="tooltip">
+            <b>{d.day}</b>
+            {#each projects as p, i}
+              <span><i style="background:{colour(i)}"></i>{p.label} {num(d.byProject[p.key])}</span>
+            {/each}
+            <span class="tot">total {num(d.total)}</span>
+          </div>
         </div>
       {/each}
     </div>
@@ -102,9 +128,9 @@
 
   <section class="cols">
     <article class="card">
-      <h2>Top events · 7d</h2>
+      <h2>Top events · {range}</h2>
       <ul class="rows">
-        {#each ph.topEvents7d as e}
+        {#each ph.topEvents as e}
           <li>
             <code>{e.event}</code>
             <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
@@ -115,17 +141,30 @@
     </article>
 
     <article class="card">
-      <h2>Errors per day · 14d</h2>
+      <h2>Error events per day · {range}</h2>
       <div class="chart small">
         {#each se.errorVolume.daily as d}
-          <div class="col" title="{d.day}: {d.count}">
-            <div class="stack"><div class="bar" style="height:{(d.count / maxErrors) * 100}%; background:#f0883e"></div></div>
+          <div class="col">
+            <div class="stack">
+              <div
+                class="bar"
+                style="height:{(d.count / maxErrors) * 100}%; background:#f0883e"
+              ></div>
+            </div>
             <span class="tick">{d.day.slice(8)}</span>
+            <div class="tip" role="tooltip">
+              <b>{d.day}</b>
+              <span>{num(d.count)} error events</span>
+            </div>
           </div>
         {/each}
       </div>
+      <p class="note">
+        counts events, not issues — ignore-scan noise is included, which is why it dwarfs the
+        unresolved count above
+      </p>
 
-      <h3>Top issues · 14d</h3>
+      <h3>Top issues · {range}</h3>
       <ul class="rows">
         {#each se.topIssues.slice(0, 6) as i}
           <li>
@@ -139,13 +178,13 @@
   </section>
 
   <section class="card">
-    <h2>Application metrics · Sentry tracemetrics</h2>
+    <h2>Application metrics · Sentry tracemetrics · {range}</h2>
     <div class="metrics">
       {#each se.metrics as m}
         <div class="metric">
           <span class="label">{m.label}</span>
           <span class="value">{dec(m.value)}</span>
-          <span class="period">{m.period}</span>
+          <span class="period">{range}</span>
         </div>
       {/each}
     </div>
@@ -153,6 +192,7 @@
 
   <footer>
     <span>PostHog read: {num(data.posthog.bytesRead)} bytes</span>
+    <span>Sentry calls: {num(se.calls)}</span>
     {#if data.posthog.errors?.length}<span class="warn">posthog: {data.posthog.errors.join('; ')}</span>{/if}
     {#if data.sentry.errors?.length}<span class="warn">sentry: {data.sentry.errors.join('; ')}</span>{/if}
   </footer>
@@ -178,27 +218,59 @@
   .pill { padding: 2px 8px; border-radius: 999px; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
   .pill.live { color: #3fb950; border-color: #238636; }
 
+  .ranges { display: flex; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  .ranges a { padding: 3px 10px; font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ranges a:hover { background: #21262d; text-decoration: none; }
+  .ranges a.active { background: #1f6feb33; color: #7cc4ff; }
+
   .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
+  .card { position: relative; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
   .kpis .card { margin: 0; }
 
   .big { font-size: 30px; font-weight: 650; margin: 0; letter-spacing: -0.02em; }
   .big.warn { color: #f0883e; }
   .split { margin: 6px 0 0; font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-  .note { margin: 2px 0 0; font-size: 11px; color: #6e7681; }
+  .note { margin: 6px 0 0; font-size: 11px; color: #6e7681; }
   .dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-left: 6px; }
   .dot:first-child { margin-left: 0; }
 
   .legend { font-size: 11px; text-transform: none; letter-spacing: 0; color: #8b949e; margin-left: 10px; display: inline-flex; gap: 6px; align-items: center; }
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-left: 6px; }
 
-  .chart { display: flex; align-items: flex-end; gap: 8px; height: 170px; padding-top: 8px; }
-  .chart.small { height: 110px; }
-  .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
+  .chart { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding-top: 8px; }
+  .chart.small { height: 120px; }
+  .col { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
   .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 100%; height: 100%; }
   .bar { width: 100%; min-height: 1px; }
   .tick { font-size: 10px; color: #6e7681; }
+
+  .tip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 116px;
+    padding: 7px 9px;
+    background: #010409;
+    border: 1px solid #30363d;
+    border-radius: 7px;
+    box-shadow: 0 6px 18px #000a;
+    font-size: 11px;
+    color: #c9d1d9;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 90ms ease;
+    z-index: 5;
+  }
+  .tip b { font-weight: 600; color: #e6edf3; }
+  .tip i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 5px; }
+  .tip .tot { border-top: 1px solid #21262d; margin-top: 3px; padding-top: 3px; color: #8b949e; }
+  .col:hover .tip { opacity: 1; }
 
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .rows li { display: grid; grid-template-columns: 1fr 90px 56px; align-items: center; gap: 10px; font-size: 13px; }

@@ -43,11 +43,18 @@ environment in production. `src/lib/config.js` is the single place env is read.
 
 ## Tiles
 
-- Events / distinct users / unresolved issues / errors — 30d KPIs
-- Events per day, 14d, stacked per project
-- Top events, 7d, merged across projects
-- Errors per day + top issues, 14d
+- Events / distinct users / unresolved issues / error events — KPIs for the selected window
+- Events per day, stacked per project, with a hover tooltip per day
+- Top events, merged across projects
+- Error events per day + top issues
 - Application metrics from Sentry's tracemetrics dataset
+
+The window is a query parameter: `?range=7d` (also `14d`, `30d`; default `30d`). Only those
+three values are accepted, so nothing user-supplied ever reaches a SQL string.
+
+**Issue count ≠ error count.** "Unresolved issues" counts *groups* and states how many events
+they contain; the error chart counts *events*, including ignored bot-scan groups. The two
+numbers are different units, which is why they look unrelated.
 
 ## Deploy (macOS, launchd)
 

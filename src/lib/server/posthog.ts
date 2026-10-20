@@ -5,6 +5,7 @@
 //
 //   POSTHOG_PROJECTS=web:Web:12345,app:App:67890    # key:label:project_id, comma separated
 import { env } from '#lib/config.js';
+import { days, type Range, DEFAULT_RANGE } from '#lib/server/range.js';
 
 const API = 'https://eu.posthog.com/api/projects';
 
@@ -29,11 +30,11 @@ export interface EventPoint extends Totals {
 }
 
 export interface PosthogTiles {
-  totals30d: Totals;
+  totals: Totals;
   /** Distinct users summed per project: the same person in two projects counts twice. */
-  users30d: Totals & { approximate: true };
-  daily14d: DayPoint[];
-  topEvents7d: EventPoint[];
+  users: Totals & { approximate: true };
+  daily: DayPoint[];
+  topEvents: EventPoint[];
 }
 
 export interface PosthogResult {
@@ -90,13 +91,14 @@ const zeroes = (list: Project[]): Record<string, number> =>
   Object.fromEntries(list.map((p) => [p.key, 0]));
 
 interface Tile<T> {
-  sql: string;
+  sql: (window: number) => string;
   merge: (per: PerProject, list: Project[]) => T;
 }
 
 const TILES = {
-  totals30d: {
-    sql: `SELECT count() AS n FROM events WHERE timestamp >= now() - INTERVAL 30 DAY`,
+  totals: {
+    sql: (window: number) =>
+      `SELECT count() AS n FROM events WHERE timestamp >= now() - INTERVAL ${window} DAY`,
     merge: (per: PerProject, list: Project[]): Totals => {
       const byProject = zeroes(list);
       let total = 0;
@@ -107,8 +109,10 @@ const TILES = {
       return { total, byProject };
     },
   },
-  users30d: {
-    sql: `SELECT count(DISTINCT distinct_id) AS n FROM events WHERE timestamp >= now() - INTERVAL 30 DAY`,
+  users: {
+    sql: (window: number) =>
+      `SELECT count(DISTINCT distinct_id) AS n FROM events
+       WHERE timestamp >= now() - INTERVAL ${window} DAY`,
     merge: (per: PerProject, list: Project[]): Totals & { approximate: true } => {
       const byProject = zeroes(list);
       let total = 0;
@@ -120,10 +124,11 @@ const TILES = {
       return { total, byProject, approximate: true };
     },
   },
-  daily14d: {
-    sql: `SELECT toDate(timestamp) AS day, count() AS events
-          FROM events WHERE timestamp >= today() - INTERVAL 13 DAY
-          GROUP BY day ORDER BY day`,
+  daily: {
+    sql: (window: number) =>
+      `SELECT toDate(timestamp) AS day, count() AS events
+       FROM events WHERE timestamp >= today() - INTERVAL ${window - 1} DAY
+       GROUP BY day ORDER BY day`,
     merge: (per: PerProject, list: Project[]): DayPoint[] => {
       const days = new Map<string, DayPoint>();
       for (const p of list) {
@@ -139,10 +144,11 @@ const TILES = {
       return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
     },
   },
-  topEvents7d: {
-    sql: `SELECT event, count() AS n FROM events
-          WHERE timestamp >= now() - INTERVAL 7 DAY
-          GROUP BY event ORDER BY n DESC LIMIT 12`,
+  topEvents: {
+    sql: (window: number) =>
+      `SELECT event, count() AS n FROM events
+       WHERE timestamp >= now() - INTERVAL ${window} DAY
+       GROUP BY event ORDER BY n DESC LIMIT 12`,
     merge: (per: PerProject, list: Project[]): EventPoint[] => {
       const events = new Map<string, EventPoint>();
       for (const p of list) {
@@ -160,8 +166,9 @@ const TILES = {
   },
 } satisfies Record<string, Tile<unknown>>;
 
-export async function posthogTiles(): Promise<PosthogResult> {
+export async function posthogTiles(range: Range = DEFAULT_RANGE): Promise<PosthogResult> {
   const list = projects();
+  const window = days(range);
   const tiles = {} as PosthogTiles;
   const errors: string[] = [];
   let bytesRead = 0;
@@ -173,7 +180,7 @@ export async function posthogTiles(): Promise<PosthogResult> {
     // Sequential on purpose: predictable read budget, no burst of 429s.
     for (const project of list) {
       try {
-        const { rows, bytesRead: b } = await hogql(project.id, tile.sql);
+        const { rows, bytesRead: b } = await hogql(project.id, tile.sql(window));
         per[project.key] = rows;
         bytesRead += b;
       } catch (err) {
