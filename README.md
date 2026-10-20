@@ -79,6 +79,8 @@ natively).
 `GET /healthz` returns `{"status":"ok","uptime_s":…,"configured":{"posthog":…,"sentry":…}}`
 with `cache-control: no-store` and **no upstream calls** — it answers "is the process up and
 configured", not "are PostHog and Sentry healthy", so it is safe to poll every minute.
+A missing token answers **503** with `"status":"degraded"`, so a 2xx-only monitor (or a
+keyword match on `"status":"ok"`) goes red when the process is up but useless.
 
 ## Gotchas found the hard way
 
