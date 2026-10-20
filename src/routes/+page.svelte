@@ -456,14 +456,14 @@
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-left: 6px; }
 
   .chart { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding-top: 8px; }
-  .col { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
+  .col { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
   .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 100%; height: 100%; }
   .bar { width: 100%; min-height: 1px; }
   .tick { font-size: 10px; color: #6e7681; }
 
   /* Slim trend strip above the group rows: shape only, numbers live in the tooltip. */
   .spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; }
-  .scol { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .scol { position: relative; flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
   .sbar { width: 100%; min-height: 1px; background: #f0883e; opacity: 0.7; border-radius: 1px; }
   .scol:hover .sbar { opacity: 1; }
   .scol:hover .tip { opacity: 1; }
@@ -497,6 +497,12 @@
   .tip i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 5px; }
   .tip .tot { border-top: 1px solid #21262d; margin-top: 3px; padding-top: 3px; color: #8b949e; }
   .col:hover .tip { opacity: 1; }
+  /* Edge bars: anchor the tooltip inside the card, otherwise it hangs off the page and
+     makes the whole document scroll sideways on a phone. */
+  .col:nth-child(-n + 7) .tip,
+  .scol:nth-child(-n + 7) .tip { left: 0; transform: none; }
+  .col:nth-last-child(-n + 7) .tip,
+  .scol:nth-last-child(-n + 7) .tip { left: auto; right: 0; transform: none; }
 
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .rows li { font-size: 13px; }
@@ -578,5 +584,25 @@
   @media (max-width: 860px) {
     .kpis, .metrics { grid-template-columns: repeat(2, 1fr); }
     .cols { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 640px) {
+    main { padding: 20px 12px 48px; }
+    header { flex-wrap: wrap; }
+    .meta { flex-wrap: wrap; justify-content: flex-start; }
+    .big { font-size: 26px; }
+    .card { padding: 14px; }
+    /* The volume bar is the first thing to lose: the title, status and count matter more. */
+    .row4 { grid-template-columns: 1fr 82px 42px; }
+    .row4 .bar-mini { display: none; }
+    .row3 { grid-template-columns: 1fr 56px 44px; }
+    .rows.groups .tag { font-size: 8.5px; padding: 1px 4px; }
+    .chart { gap: 3px; }
+    /* 30 day labels cannot fit across 350px — show every fifth one. */
+    .tick { display: none; }
+    .col:nth-child(5n + 1) .tick { display: block; }
+    .mstats { grid-template-columns: repeat(2, 1fr); }
+    .modal { padding: 14px 14px 18px; }
+    .backdrop { padding: 16px 10px; }
   }
 </style>
