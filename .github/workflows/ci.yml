@@ -22,7 +22,9 @@ concurrency:
 jobs:
   gates:
     name: Types and build
-    runs-on: ubuntu-latest
+    # Pinned deliberately: `ubuntu-latest` migrates to Ubuntu 26 from 19 Oct 2026, and a
+    # background image change is not something a build check should absorb silently.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 

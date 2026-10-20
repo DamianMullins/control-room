@@ -74,6 +74,12 @@ do not expose it to the internet as-is.
 numbers without the web app — `node scripts/posthog-merged.ts` (Node 22+ strips the types
 natively).
 
+## Health
+
+`GET /healthz` returns `{"status":"ok","uptime_s":…,"configured":{"posthog":…,"sentry":…}}`
+with `cache-control: no-store` and **no upstream calls** — it answers "is the process up and
+configured", not "are PostHog and Sentry healthy", so it is safe to poll every minute.
+
 ## Gotchas found the hard way
 
 - **"Last 14 days" needs `today() - INTERVAL 13 DAY`.** `now() - INTERVAL 14 DAY` is
