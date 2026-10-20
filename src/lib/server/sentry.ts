@@ -1,7 +1,7 @@
 // Sentry: issues, error volume, and Application Metrics (tracemetrics dataset).
 // The region matters: an EU/DE org must be queried against de.sentry.io, not sentry.io.
 import { env } from '#lib/config.js';
-import { type Range, days, DEFAULT_RANGE } from '#lib/server/range.js';
+import { hours, isHourly, type Range, DEFAULT_RANGE } from '#lib/server/range.js';
 
 const BASE = env('SENTRY_BASE_URL') ?? 'https://de.sentry.io/api/0';
 const ORG = env('SENTRY_ORG');
@@ -24,6 +24,12 @@ export interface SentryMetric {
   value: number | null;
 }
 
+export interface VolumePoint {
+  label: string;
+  full: string;
+  count: number;
+}
+
 export interface SentryTiles {
   project: string;
   region: string;
@@ -34,7 +40,7 @@ export interface SentryTiles {
    * numbers are different units on purpose.
    */
   unresolved: { count: number; events: number; issues: SentryIssue[] };
-  errorVolume: { d24h: number | null; total: number | null; daily: { day: string; count: number }[] };
+  errorVolume: { d24h: number | null; total: number | null; series: VolumePoint[] };
   metrics: SentryMetric[];
   /** Successful API calls made for this render — the Sentry counterpart to PostHog's bytes. */
   calls: number;
@@ -56,6 +62,8 @@ type Params = Record<string, string | number | undefined | null>;
 
 export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryTiles> {
   const errors: string[] = [];
+  const hourly = isHourly(range);
+  const window = hours(range);
   let calls = 0;
 
   async function api<T>(path: string, params: Params = {}): Promise<T> {
@@ -101,7 +109,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
     region: BASE.includes('de.sentry.io') ? 'DE' : 'US',
     topIssues: [],
     unresolved: { count: 0, events: 0, issues: [] },
-    errorVolume: { d24h: null, total: null, daily: [] },
+    errorVolume: { d24h: null, total: null, series: [] },
     metrics: [],
     calls: 0,
     errors,
@@ -117,14 +125,15 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   };
 
   // The issues endpoint only accepts statsPeriod '', '24h' or '14d' — anything else 400s.
-  // So the window is applied in the QUERY (`lastSeen:-Nd`) and statsPeriod stays 14d,
-  // which only affects the unused sparkline series.
-  const issueWindow = `lastSeen:-${days(range)}d`;
+  // So the window lives in the QUERY (`lastSeen:-…`) and statsPeriod only drives the
+  // unused sparkline series.
+  const issueWindow = hourly ? `lastSeen:-${window}h` : `lastSeen:-${window / 24}d`;
+  const issueStatsPeriod = hourly ? '24h' : '14d';
 
   const issues = await settle('issues', () =>
     api<RawIssue[]>(`/projects/${ORG}/${PROJECT}/issues/`, {
       query: issueWindow,
-      statsPeriod: '14d',
+      statsPeriod: issueStatsPeriod,
       limit: 10,
       sort: 'freq',
     })
@@ -134,7 +143,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   const unresolved = await settle('unresolved', () =>
     api<RawIssue[]>(`/projects/${ORG}/${PROJECT}/issues/`, {
       query: `is:unresolved ${issueWindow}`,
-      statsPeriod: '14d',
+      statsPeriod: issueStatsPeriod,
       limit: 25,
       sort: 'freq',
     })
@@ -155,18 +164,32 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
       dataset: 'errors',
       yAxis: 'count()',
       statsPeriod: range,
-      interval: '1d',
+      interval: hourly ? '1h' : '1d',
     })
   );
   if (Array.isArray(series?.data)) {
-    // Sentry returns one extra leading bucket for the period — trim to the window length.
-    const keep = Number(range.replace('d', ''));
-    out.errorVolume.daily = series.data
-      .map(([ts, values]) => ({
-        day: new Date(ts * 1000).toISOString().slice(0, 10),
-        count: values?.[0]?.count ?? 0,
-      }))
-      .slice(-keep);
+    // Align to the same window the PostHog chart uses (ending now), rather than trusting
+    // Sentry's bucket boundaries — otherwise the two charts end an hour apart.
+    const wanted = hourly ? window : window / 24;
+    const step = hourly ? 3_600_000 : 86_400_000;
+    const byFull = new Map<string, number>();
+    for (const [ts, values] of series.data) {
+      const iso = new Date(ts * 1000).toISOString();
+      const full = hourly ? `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00` : iso.slice(0, 10);
+      byFull.set(full, (byFull.get(full) ?? 0) + (values?.[0]?.count ?? 0));
+    }
+
+    const now = Date.now();
+    out.errorVolume.series = [];
+    for (let i = wanted - 1; i >= 0; i -= 1) {
+      const iso = new Date(now - i * step).toISOString();
+      const full = hourly ? `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00` : iso.slice(0, 10);
+      out.errorVolume.series.push({
+        label: hourly ? `${iso.slice(11, 13)}:00` : iso.slice(8, 10),
+        full,
+        count: byFull.get(full) ?? 0,
+      });
+    }
   }
 
   // Application metrics. Unit must match the registered unit or the query reads 0.

@@ -12,8 +12,8 @@
   const palette = ['#58a6ff', '#3fb950', '#f0883e', '#a371f7', '#e3b341'];
   const colour = (i: number): string => palette[i % palette.length];
 
-  const maxDaily = $derived(Math.max(1, ...ph.daily.map((d) => d.total)));
-  const maxErrors = $derived(Math.max(1, ...se.errorVolume.daily.map((d) => d.count)));
+  const maxDaily = $derived(Math.max(1, ...ph.series.map((d) => d.total)));
+  const maxErrors = $derived(Math.max(1, ...se.errorVolume.series.map((d) => d.count)));
   const maxEvent = $derived(Math.max(1, ...ph.topEvents.map((e) => e.total)));
 
   const nf = new Intl.NumberFormat('en-GB');
@@ -24,6 +24,7 @@
 
   const stale = $derived(data.posthog.cached && data.sentry.cached);
   const label = $derived(projects.map((p) => p.label).join(' + '));
+  const bucketUnit = $derived(range === '24h' ? 'hour' : 'day');
 </script>
 
 <svelte:head>
@@ -96,13 +97,13 @@
 
   <section class="card">
     <h2>
-      Events per day · {range}
+      Events per {bucketUnit} · {range}
       <span class="legend">
         {#each projects as p, i}<i style="background:{colour(i)}"></i>{p.label}{/each}
       </span>
     </h2>
     <div class="chart">
-      {#each ph.daily as d}
+      {#each ph.series as d}
         <div class="col">
           <div class="stack">
             {#each projects as p, i}
@@ -112,10 +113,10 @@
               ></div>
             {/each}
           </div>
-          <span class="tick">{d.day.slice(8)}</span>
+          <span class="tick">{d.label}</span>
 
           <div class="tip" role="tooltip">
-            <b>{d.day}</b>
+            <b>{d.full}</b>
             {#each projects as p, i}
               <span><i style="background:{colour(i)}"></i>{p.label} {num(d.byProject[p.key])}</span>
             {/each}
@@ -136,14 +137,16 @@
             <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
             <b>{num(e.total)}</b>
           </li>
+        {:else}
+          <li class="empty">No events in this window</li>
         {/each}
       </ul>
     </article>
 
     <article class="card">
-      <h2>Error events per day · {range}</h2>
-      <div class="chart small">
-        {#each se.errorVolume.daily as d}
+      <h2>Error events per {bucketUnit} · {range}</h2>
+      <div class="chart small" class:dense={range === '24h'}>
+        {#each se.errorVolume.series as d}
           <div class="col">
             <div class="stack">
               <div
@@ -151,9 +154,9 @@
                 style="height:{(d.count / maxErrors) * 100}%; background:#f0883e"
               ></div>
             </div>
-            <span class="tick">{d.day.slice(8)}</span>
+            <span class="tick">{d.label}</span>
             <div class="tip" role="tooltip">
-              <b>{d.day}</b>
+              <b>{d.full}</b>
               <span>{num(d.count)} error events</span>
             </div>
           </div>
@@ -172,6 +175,8 @@
             <span class="tag {i.status}">{i.status}</span>
             <b>{num(i.count)}</b>
           </li>
+        {:else}
+          <li class="empty">No issues in this window</li>
         {/each}
       </ul>
     </article>
@@ -244,6 +249,9 @@
   .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 100%; height: 100%; }
   .bar { width: 100%; min-height: 1px; }
   .tick { font-size: 10px; color: #6e7681; }
+  /* 24 hourly labels will not fit in the narrow chart — thin every other one. */
+  .chart.dense .col:nth-child(2n) .tick { visibility: hidden; }
+  .rows li.empty { color: #6e7681; font-size: 12px; display: block; }
 
   .tip {
     position: absolute;

@@ -49,8 +49,11 @@ environment in production. `src/lib/config.js` is the single place env is read.
 - Error events per day + top issues
 - Application metrics from Sentry's tracemetrics dataset
 
-The window is a query parameter: `?range=7d` (also `14d`, `30d`; default `30d`). Only those
-three values are accepted, so nothing user-supplied ever reaches a SQL string.
+The window is a query parameter: `?range=24h` (also `7d`, `14d`, `30d`; default `30d`). Only
+those four values are accepted, so nothing user-supplied ever reaches a SQL string. The choice
+is remembered in a cookie, so a bare `/` reopens the last window you looked at; 24h is bucketed
+by hour, the rest by day, and both charts are aligned to the same bucket boundaries with empty
+buckets zero-filled.
 
 **Issue count ≠ error count.** "Unresolved issues" counts *groups* and states how many events
 they contain; the error chart counts *events*, including ignored bot-scan groups. The two

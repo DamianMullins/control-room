@@ -5,7 +5,7 @@
 //
 //   POSTHOG_PROJECTS=web:Web:12345,app:App:67890    # key:label:project_id, comma separated
 import { env } from '#lib/config.js';
-import { days, type Range, DEFAULT_RANGE } from '#lib/server/range.js';
+import { hours, isHourly, type Range, DEFAULT_RANGE } from '#lib/server/range.js';
 
 const API = 'https://eu.posthog.com/api/projects';
 
@@ -21,8 +21,10 @@ export interface Totals {
   byProject: Record<string, number>;
 }
 
-export interface DayPoint extends Totals {
-  day: string;
+/** One point on a time series: a short axis label, a full label for the tooltip, counts. */
+export interface Bucket extends Totals {
+  label: string;
+  full: string;
 }
 
 export interface EventPoint extends Totals {
@@ -33,7 +35,7 @@ export interface PosthogTiles {
   totals: Totals;
   /** Distinct users summed per project: the same person in two projects counts twice. */
   users: Totals & { approximate: true };
-  daily: DayPoint[];
+  series: Bucket[];
   topEvents: EventPoint[];
 }
 
@@ -90,15 +92,42 @@ async function hogql(projectId: number, sql: string) {
 const zeroes = (list: Project[]): Record<string, number> =>
   Object.fromEntries(list.map((p) => [p.key, 0]));
 
+/**
+ * HogQL only returns buckets that have events, so a quiet hour or day simply vanishes and
+ * the chart silently compresses its x-axis. Build the full window and zero-fill instead.
+ * Buckets are UTC, which is what HogQL's now()/today() compare against.
+ */
+function fillSeries(buckets: Bucket[], window: number, hourly: boolean, list: Project[]): Bucket[] {
+  const step = hourly ? 3_600_000 : 86_400_000;
+  const now = Date.now();
+  const byFull = new Map(buckets.map((b) => [b.full, b]));
+  const out: Bucket[] = [];
+
+  for (let i = window - 1; i >= 0; i -= 1) {
+    const iso = new Date(now - i * step).toISOString();
+    const full = hourly ? `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00` : iso.slice(0, 10);
+    out.push(
+      byFull.get(full) ?? {
+        label: hourly ? `${iso.slice(11, 13)}:00` : iso.slice(8, 10),
+        full,
+        total: 0,
+        byProject: zeroes(list),
+      }
+    );
+  }
+
+  return out;
+}
+
 interface Tile<T> {
-  sql: (window: number) => string;
-  merge: (per: PerProject, list: Project[]) => T;
+  sql: (window: number, hourly: boolean) => string;
+  merge: (per: PerProject, list: Project[], hourly: boolean) => T;
 }
 
 const TILES = {
   totals: {
     sql: (window: number) =>
-      `SELECT count() AS n FROM events WHERE timestamp >= now() - INTERVAL ${window} DAY`,
+      `SELECT count() AS n FROM events WHERE timestamp >= now() - INTERVAL ${window} HOUR`,
     merge: (per: PerProject, list: Project[]): Totals => {
       const byProject = zeroes(list);
       let total = 0;
@@ -112,7 +141,7 @@ const TILES = {
   users: {
     sql: (window: number) =>
       `SELECT count(DISTINCT distinct_id) AS n FROM events
-       WHERE timestamp >= now() - INTERVAL ${window} DAY`,
+       WHERE timestamp >= now() - INTERVAL ${window} HOUR`,
     merge: (per: PerProject, list: Project[]): Totals & { approximate: true } => {
       const byProject = zeroes(list);
       let total = 0;
@@ -124,30 +153,45 @@ const TILES = {
       return { total, byProject, approximate: true };
     },
   },
-  daily: {
-    sql: (window: number) =>
-      `SELECT toDate(timestamp) AS day, count() AS events
-       FROM events WHERE timestamp >= today() - INTERVAL ${window - 1} DAY
-       GROUP BY day ORDER BY day`,
-    merge: (per: PerProject, list: Project[]): DayPoint[] => {
-      const days = new Map<string, DayPoint>();
+  series: {
+    // Hourly for 24h, daily otherwise. `toStartOfHour` comes back as a DateTime string.
+    sql: (window: number, hourly: boolean) =>
+      hourly
+        ? `SELECT toStartOfHour(timestamp) AS bucket, count() AS events
+           FROM events WHERE timestamp >= now() - INTERVAL ${window} HOUR
+           GROUP BY bucket ORDER BY bucket`
+        : `SELECT toDate(timestamp) AS bucket, count() AS events
+           FROM events WHERE timestamp >= today() - INTERVAL ${window / 24 - 1} DAY
+           GROUP BY bucket ORDER BY bucket`,
+    merge: (per: PerProject, list: Project[], hourly: boolean): Bucket[] => {
+      const buckets = new Map<string, Bucket>();
       for (const p of list) {
         for (const row of per[p.key] ?? []) {
-          const day = String(row[0]).slice(0, 10);
+          // HogQL can hand back 'YYYY-MM-DD HH:…' or ISO with a 'T' — normalise before
+          // slicing, or the same hour lands in two buckets with one label.
+          const raw = String(row[0]).replace('T', ' ');
           const n = Number(row[1]);
-          const point = days.get(day) ?? { day, total: 0, byProject: zeroes(list) };
+          const key = hourly ? raw.slice(0, 13) : raw.slice(0, 10); // 'YYYY-MM-DD HH' | 'YYYY-MM-DD'
+          const point =
+            buckets.get(key) ??
+            ({
+              label: hourly ? `${key.slice(11, 13)}:00` : key.slice(8),
+              full: hourly ? `${key.slice(0, 10)} ${key.slice(11, 13)}:00` : key,
+              total: 0,
+              byProject: zeroes(list),
+            } satisfies Bucket);
           point.byProject[p.key] = n;
           point.total += n;
-          days.set(day, point);
+          buckets.set(key, point);
         }
       }
-      return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
+      return [...buckets.values()].sort((a, b) => a.full.localeCompare(b.full));
     },
   },
   topEvents: {
     sql: (window: number) =>
       `SELECT event, count() AS n FROM events
-       WHERE timestamp >= now() - INTERVAL ${window} DAY
+       WHERE timestamp >= now() - INTERVAL ${window} HOUR
        GROUP BY event ORDER BY n DESC LIMIT 12`,
     merge: (per: PerProject, list: Project[]): EventPoint[] => {
       const events = new Map<string, EventPoint>();
@@ -168,7 +212,8 @@ const TILES = {
 
 export async function posthogTiles(range: Range = DEFAULT_RANGE): Promise<PosthogResult> {
   const list = projects();
-  const window = days(range);
+  const window = hours(range);
+  const hourly = isHourly(range);
   const tiles = {} as PosthogTiles;
   const errors: string[] = [];
   let bytesRead = 0;
@@ -180,7 +225,7 @@ export async function posthogTiles(range: Range = DEFAULT_RANGE): Promise<Postho
     // Sequential on purpose: predictable read budget, no burst of 429s.
     for (const project of list) {
       try {
-        const { rows, bytesRead: b } = await hogql(project.id, tile.sql(window));
+        const { rows, bytesRead: b } = await hogql(project.id, tile.sql(window, hourly));
         per[project.key] = rows;
         bytesRead += b;
       } catch (err) {
@@ -189,8 +234,11 @@ export async function posthogTiles(range: Range = DEFAULT_RANGE): Promise<Postho
       }
     }
 
-    (tiles as unknown as Record<string, unknown>)[name] = tile.merge(per, list);
+    (tiles as unknown as Record<string, unknown>)[name] = tile.merge(per, list, hourly);
   }
+
+  // window is in HOURS; fillSeries wants a bucket count.
+  tiles.series = fillSeries(tiles.series, hourly ? window : window / 24, hourly, list);
 
   return { projects: list, tiles, bytesRead, errors };
 }
