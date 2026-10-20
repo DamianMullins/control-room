@@ -51,8 +51,12 @@ function mergeSeries(
   return [...buckets.values()].sort((a, b) => a.full.localeCompare(b.full));
 }
 
-export async function eventDetail(name: string, range: Range): Promise<Detail> {
-  const list = projects();
+export async function eventDetail(
+  name: string,
+  range: Range,
+  only?: string[]
+): Promise<Detail> {
+  const list = only ? projects().filter((p) => only.includes(p.key)) : projects();
   const window = hours(range);
   const hourly = isHourly(range);
   const bucket = hourly ? 'toStartOfHour(timestamp)' : 'toDate(timestamp)';
@@ -128,7 +132,12 @@ export async function eventDetail(name: string, range: Range): Promise<Detail> {
 }
 
 /** One bar of either chart. `at` is the bucket key already shown in the tooltip. */
-export async function bucketDetail(at: string, source: 'events' | 'errors', range: Range): Promise<Detail> {
+export async function bucketDetail(
+  at: string,
+  source: 'events' | 'errors',
+  range: Range,
+  only?: string[]
+): Promise<Detail> {
   const hourly = at.includes(' ');
   // Compare the SAME truncated expression the chart grouped by, rather than a
   // midnight-to-midnight range: a project timezone offset would otherwise make the
@@ -148,7 +157,8 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
     let rows: { label: string; value: string }[] = [];
     let total = 0;
     // Both orgs' events land in this bucket; query each and merge.
-    for (const ref of sentryProjects()) {
+    const sentryList = only ? sentryProjects().filter((p) => only.includes(p.key)) : sentryProjects();
+    for (const ref of sentryList) {
       try {
         const body = await sentryApi<{ data?: { issue: string; 'count()': number }[] }>(
           ref,
@@ -164,7 +174,7 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
         );
         for (const r of body.data ?? []) {
           rows.push({
-            label: `${r.issue}${ref.key === sentryProjects()[0]?.key ? '' : ` (${ref.label})`}`,
+            label: `${r.issue}${ref.key === sentryList[0]?.key ? '' : ` (${ref.label})`}`,
             value: num(r['count()']),
           });
           total += r['count()'];
@@ -176,7 +186,7 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
     rows = rows.sort((a, b) => Number(b.value.replace(/,/g, '')) - Number(a.value.replace(/,/g, '')));
     return {
       title: `Error events · ${at}`,
-      subtitle: `Sentry · ${sentryProjects().map((p) => p.label).join(' + ')} · ${range}`,
+      subtitle: `Sentry · ${sentryList.map((p) => p.label).join(' + ')} · ${range}`,
       stats: [
         { label: 'Events in bucket', value: num(total) },
         { label: 'Issue groups', value: num(rows.length) },
@@ -195,7 +205,7 @@ export async function bucketDetail(at: string, source: 'events' | 'errors', rang
     };
   }
 
-  const list = projects();
+  const list = only ? projects().filter((p) => only.includes(p.key)) : projects();
   const per: Record<string, Rows> = {};
   for (const project of list) {
     try {
@@ -367,8 +377,8 @@ export async function issueDetail(
 }
 
 /** One page path, viewed from both sides: PostHog traffic and Sentry errors on it. */
-export async function pathDetail(path: string, range: Range): Promise<Detail> {
-  const list = projects();
+export async function pathDetail(path: string, range: Range, only?: string[]): Promise<Detail> {
+  const list = only ? projects().filter((p) => only.includes(p.key)) : projects();
   const window = hours(range);
   const hourly = isHourly(range);
   const bucketExpr = hourly ? 'toStartOfHour(timestamp)' : 'toDate(timestamp)';
@@ -403,7 +413,8 @@ export async function pathDetail(path: string, range: Range): Promise<Detail> {
   let groupLinks: Detail['related'] = [];
   let errorEvents = 0;
 
-  for (const ref of sentryProjects()) {
+  const sentryList = only ? sentryProjects().filter((p) => only.includes(p.key)) : sentryProjects();
+  for (const ref of sentryList) {
     try {
       const grouped = await sentryApi<
         { data?: { issue: string; 'issue.id': number; 'count()': number }[] }
@@ -416,7 +427,7 @@ export async function pathDetail(path: string, range: Range): Promise<Detail> {
         per_page: 10,
       });
       const rowsData = grouped.data ?? [];
-      const suffix = ref.key === sentryProjects()[0]?.key ? '' : ` (${ref.label})`;
+      const suffix = ref.key === sentryList[0]?.key ? '' : ` (${ref.label})`;
       groups.push(...rowsData.map((r) => ({ label: `${r.issue}${suffix}`, value: num(r['count()']) })));
       groupLinks.push(
         ...rowsData.slice(0, 3).map((r) => ({

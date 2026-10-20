@@ -30,6 +30,8 @@
 
   const stale = $derived(data.posthog.cached && data.sentry.cached);
   const label = $derived(projects.map((p) => p.label).join(' + '));
+  // With one project selected the per-project split chips are just noise.
+  const multi = $derived(data.projects.length > 1 && !data.selected);
   const bucketUnit = $derived(range === '24h' ? 'hour' : 'day');
 
   type Detail = import('#lib/server/detail.js').Detail;
@@ -45,6 +47,7 @@
     params: Record<string, string>
   ) {
     const qs = new URLSearchParams({ kind, range, ...params });
+    if (data.selected && !params.project) qs.set('project', data.selected);
     loading = true;
     failed = null;
     detail = null;
@@ -90,15 +93,39 @@
     <div>
       <h1>Control room</h1>
       <p class="sub">
-        PostHog ({projects.length} project{projects.length === 1 ? '' : 's'}, merged) · Sentry
-        {se.projects.map((p) => `${p.label} (${p.region})`).join(' + ')}
+        {#if data.selected}
+          {projects[0]?.label ?? data.selected} · PostHog events + Sentry errors
+        {:else}
+          PostHog ({projects.length} project{projects.length === 1 ? '' : 's'}, merged) · Sentry
+          {#if se.projects.length}
+            {se.projects.map((p) => `${p.label} (${p.region})`).join(' + ')}
+          {:else}
+            not configured for this project
+          {/if}
+        {/if}
       </p>
     </div>
     <div class="meta">
+      <span class="ctrl-label">project</span>
+      <nav class="ranges" aria-label="Project">
+        <a
+          href="?range={range}"
+          class:active={!data.selected}
+          aria-current={!data.selected ? 'true' : undefined}>all</a
+        >
+        {#each data.projects as option}
+          <a
+            href="?range={range}&project={option.key}"
+            class:active={data.selected === option.key}
+            aria-current={data.selected === option.key ? 'true' : undefined}>{option.label}</a
+          >
+        {/each}
+      </nav>
+      <span class="ctrl-label">range</span>
       <nav class="ranges" aria-label="Time range">
         {#each data.ranges as option}
           <a
-            href="?range={option}"
+            href="?range={option}{data.selected ? `&project=${data.selected}` : ''}"
             class:active={option === range}
             aria-current={option === range ? 'true' : undefined}>{option}</a
           >
@@ -113,24 +140,28 @@
     <article class="card">
       <h2>Events · {range}</h2>
       <p class="big">{num(ph.totals.total)}</p>
-      <p class="split">
-        {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals.byProject[p.key])}
-          {p.label.toLowerCase()}
-        {/each}
-      </p>
+      {#if multi}
+        <p class="split">
+          {#each projects as p, i}
+            <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals.byProject[p.key])}
+            {p.label.toLowerCase()}
+          {/each}
+        </p>
+      {/if}
     </article>
 
     <article class="card">
       <h2>Distinct users · {range}</h2>
       <p class="big">{num(ph.users.total)}</p>
-      <p class="split">
-        {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.users.byProject[p.key])}
-          {p.label.toLowerCase()}
-        {/each}
-      </p>
-      <p class="note">summed per project — the same person in two projects counts twice</p>
+      {#if multi}
+        <p class="split">
+          {#each projects as p, i}
+            <span class="dot" style="background:{colour(i)}"></span>{num(ph.users.byProject[p.key])}
+            {p.label.toLowerCase()}
+          {/each}
+        </p>
+        <p class="note">summed per project — the same person in two projects counts twice</p>
+      {/if}
     </article>
 
     <article class="card">
@@ -139,28 +170,32 @@
       <p class="split">
         {num(se.unresolved.events)} events across those issues · {range}
       </p>
-      <p class="split">
-        {#each se.projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(
-            se.unresolved.byProject[p.key]
-          )}
-          {p.label.toLowerCase()}
-        {/each}
-      </p>
+      {#if multi}
+        <p class="split">
+          {#each se.projects as p, i}
+            <span class="dot" style="background:{colour(i)}"></span>{num(
+              se.unresolved.byProject[p.key]
+            )}
+            {p.label.toLowerCase()}
+          {/each}
+        </p>
+      {/if}
     </article>
 
     <article class="card">
       <h2>Error events · 24h</h2>
       <p class="big">{num(se.errorVolume.d24h)}</p>
       <p class="split">{num(se.errorVolume.total)} in {range}</p>
-      <p class="split">
-        {#each se.projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(
-            se.errorVolume.d24hByProject[p.key]
-          )}
-          {p.label.toLowerCase()}
-        {/each}
-      </p>
+      {#if multi}
+        <p class="split">
+          {#each se.projects as p, i}
+            <span class="dot" style="background:{colour(i)}"></span>{num(
+              se.errorVolume.d24hByProject[p.key]
+            )}
+            {p.label.toLowerCase()}
+          {/each}
+        </p>
+      {/if}
     </article>
   </section>
 
@@ -435,6 +470,7 @@
   .pill { padding: 2px 8px; border-radius: 999px; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
   .pill.live { color: #3fb950; border-color: #238636; }
 
+  .ctrl-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: #6e7681; }
   .ranges { display: flex; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
   .ranges a { padding: 3px 10px; font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.06em; }
   .ranges a:hover { background: #21262d; text-decoration: none; }
@@ -584,6 +620,8 @@
   @media (max-width: 860px) {
     .kpis, .metrics { grid-template-columns: repeat(2, 1fr); }
     .cols { grid-template-columns: 1fr; }
+    /* The tabs read fine on their own once the row wraps; the labels are just width. */
+    .ctrl-label { display: none; }
   }
 
   @media (max-width: 640px) {

@@ -211,8 +211,15 @@ const TILES = {
   },
 } satisfies Record<string, Tile<unknown>>;
 
-export async function posthogTiles(range: Range = DEFAULT_RANGE): Promise<PosthogResult> {
-  const list = projects();
+/**
+ * `only` narrows the fan-out to the given project keys — the header's project selector.
+ * An empty list means "no project matched"; the caller decides how to render that.
+ */
+export async function posthogTiles(
+  range: Range = DEFAULT_RANGE,
+  only?: string[]
+): Promise<PosthogResult> {
+  const list = only ? projects().filter((p) => only.includes(p.key)) : projects();
   const window = hours(range);
   const hourly = isHourly(range);
   const tiles = {} as PosthogTiles;

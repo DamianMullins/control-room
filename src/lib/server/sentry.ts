@@ -177,8 +177,11 @@ export const sentryProjectByKey = (key: string): SentryProjectRef => {
   return found;
 };
 
-export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryTiles> {
-  const list = sentryProjects();
+export async function sentryTiles(
+  range: Range = DEFAULT_RANGE,
+  only?: string[]
+): Promise<SentryTiles> {
+  const list = only ? sentryProjects().filter((p) => only.includes(p.key)) : sentryProjects();
   const hourly = isHourly(range);
   const window = hours(range);
   const errors: string[] = [];

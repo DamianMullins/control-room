@@ -74,6 +74,12 @@ is remembered in a cookie, so a bare `/` reopens the last window you looked at; 
 by hour, the rest by day, and both charts are aligned to the same bucket boundaries with empty
 buckets zero-filled.
 
+**Project filter.** `?project=<key>` narrows every tile, chart and drill-down to a single project;
+`all` (or omitting it) merges the configured ones. The keys are the ones in `POSTHOG_PROJECTS`
+and `SENTRY_PROJECTS` — the same key is assumed to mean the same product across both sources —
+and an unknown key falls back to `all` rather than erroring. Combining `range` and `project` is
+free: the 5-minute cache is keyed on both.
+
 **Issue count ≠ error count.** "Unresolved issues" counts *groups* and states how many events
 they contain; the error chart counts *events*, including ignored bot-scan groups. The two
 numbers are different units, which is why they look unrelated.
