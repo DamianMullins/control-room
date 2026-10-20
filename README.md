@@ -24,6 +24,7 @@ billing limits are per org — there is no query that spans them. So this app fa
 cp .env.example .env   # tokens + your projects
 pnpm install
 pnpm dev               # http://localhost:5390
+pnpm check             # svelte-check, strict
 pnpm build && pnpm start
 ```
 
@@ -69,8 +70,9 @@ pnpm build && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.pl
 (Tailscale, WireGuard, a reverse proxy with auth). It has **no authentication of its own** —
 do not expose it to the internet as-is.
 
-`scripts/posthog-merged.mjs` is the same fan-out as a standalone CLI, useful for checking
-numbers without the web app.
+`scripts/posthog-merged.ts` is the same fan-out as a standalone CLI, useful for checking
+numbers without the web app — `node scripts/posthog-merged.ts` (Node 22+ strips the types
+natively).
 
 ## Gotchas found the hard way
 

@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
     "start": "node build"
   },
@@ -17,7 +18,10 @@
     "@sveltejs/adapter-node": "^6.0.0",
     "@sveltejs/kit": "^3.1.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^26.6.5",
     "svelte": "^5.57.1",
+    "svelte-check": "^4.7.7",
+    "typescript": "^6.0.3",
     "vite": "^8.3.4"
   }
 }

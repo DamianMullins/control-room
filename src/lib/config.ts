@@ -4,4 +4,4 @@
 // variable to be declared through `defineEnvVars`. This app is configured entirely from
 // ordinary environment variables, so it reads process.env directly; vite.config.js loads
 // .env into process.env in dev, and the platform provides it at runtime in production.
-export const env = (name) => process.env[name];
+export const env = (name: string): string | undefined => process.env[name];

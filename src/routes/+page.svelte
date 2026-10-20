@@ -1,5 +1,7 @@
-<script>
-  let { data } = $props();
+<script lang="ts">
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
 
   const ph = $derived(data.posthog.tiles);
   const se = $derived(data.sentry);
@@ -7,15 +9,17 @@
   const projects = $derived(data.posthog.projects ?? []);
 
   const palette = ['#58a6ff', '#3fb950', '#f0883e', '#a371f7', '#e3b341'];
-  const colour = (i) => palette[i % palette.length];
+  const colour = (i: number): string => palette[i % palette.length];
 
   const maxDaily = $derived(Math.max(1, ...ph.daily14d.map((d) => d.total)));
   const maxErrors = $derived(Math.max(1, ...se.errorVolume.daily.map((d) => d.count)));
   const maxEvent = $derived(Math.max(1, ...ph.topEvents7d.map((e) => e.total)));
 
   const nf = new Intl.NumberFormat('en-GB');
-  const num = (v) => (v === null || v === undefined ? '—' : nf.format(Math.round(v * 100) / 100));
-  const dec = (v) => (v === null || v === undefined ? '—' : Math.round(v * 100) / 100);
+  const num = (v: number | null | undefined): string =>
+    v === null || v === undefined ? '—' : nf.format(Math.round(v * 100) / 100);
+  const dec = (v: number | null | undefined): number | string =>
+    v === null || v === undefined ? '—' : Math.round(v * 100) / 100;
 
   const stale = $derived(data.posthog.cached && data.sentry.cached);
   const label = $derived(projects.map((p) => p.label).join(' + '));
@@ -46,7 +50,7 @@
       <p class="big">{num(ph.totals30d.total)}</p>
       <p class="split">
         {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals30d[p.key])} {p.label.toLowerCase()}
+          <span class="dot" style="background:{colour(i)}"></span>{num(ph.totals30d.byProject[p.key])} {p.label.toLowerCase()}
         {/each}
       </p>
     </article>
@@ -56,7 +60,7 @@
       <p class="big">{num(ph.users30d.total)}</p>
       <p class="split">
         {#each projects as p, i}
-          <span class="dot" style="background:{colour(i)}"></span>{num(ph.users30d[p.key])} {p.label.toLowerCase()}
+          <span class="dot" style="background:{colour(i)}"></span>{num(ph.users30d.byProject[p.key])} {p.label.toLowerCase()}
         {/each}
       </p>
       <p class="note">summed per project — the same person in two projects counts twice</p>
@@ -87,7 +91,7 @@
         <div class="col" title="{d.day}: {num(d.total)}">
           <div class="stack">
             {#each projects as p, i}
-              <div class="bar" style="height:{(d[p.key] / maxDaily) * 100}%; background:{colour(i)}"></div>
+              <div class="bar" style="height:{(d.byProject[p.key] / maxDaily) * 100}%; background:{colour(i)}"></div>
             {/each}
           </div>
           <span class="tick">{d.day.slice(8)}</span>
