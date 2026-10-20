@@ -13,6 +13,7 @@
   const colour = (i: number): string => palette[i % palette.length];
 
   const maxDaily = $derived(Math.max(1, ...ph.series.map((d) => d.total)));
+  const maxErrors = $derived(Math.max(1, ...se.errorVolume.series.map((d) => d.count)));
   const maxGroup = $derived(
     Math.max(1, ...se.topIssues.map((i) => i.count), ...se.otherIssues.map((i) => i.count))
   );
@@ -151,6 +152,23 @@
     <article class="card">
       <h2>Error events by issue group · {range}</h2>
 
+      <div class="spark">
+        {#each se.errorVolume.series as d}
+          <div class="scol">
+            <div class="sbar" style="height:{(d.count / maxErrors) * 100}%"></div>
+            <div class="tip" role="tooltip">
+              <b>{d.full}</b>
+              <span>{num(d.count)} error events</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+      <p class="spark-axis">
+        <span>{se.errorVolume.series[0]?.label}</span>
+        <span>{num(se.errorVolume.total)} in {range} · trend per {bucketUnit}</span>
+        <span>{se.errorVolume.series[se.errorVolume.series.length - 1]?.label}</span>
+      </p>
+
       <h3>Unresolved · {se.unresolved.count}</h3>
       <ul class="rows groups">
         {#each se.topIssues as i}
@@ -257,6 +275,14 @@
   .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 100%; height: 100%; }
   .bar { width: 100%; min-height: 1px; }
   .tick { font-size: 10px; color: #6e7681; }
+
+  /* Slim trend strip above the group rows: shape only, numbers live in the tooltip. */
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; }
+  .scol { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .sbar { width: 100%; min-height: 1px; background: #f0883e; opacity: 0.7; border-radius: 1px; }
+  .scol:hover .sbar { opacity: 1; }
+  .scol:hover .tip { opacity: 1; }
+  .spark-axis { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: #6e7681; margin: 4px 0 16px; }
   .rows li.empty { color: #6e7681; font-size: 12px; display: block; }
   .rows.dim a, .rows.dim b { color: #8b949e; }
 

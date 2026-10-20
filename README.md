@@ -46,8 +46,8 @@ environment in production. `src/lib/config.js` is the single place env is read.
 - Events / distinct users / unresolved issues / error events — KPIs for the selected window
 - Events per day, stacked per project, with a hover tooltip per day
 - Top events, merged across projects
-- Error events broken down by issue group (unresolved first, then ignored/resolved), with the
-  groups' share of the window's total spelled out
+- Error events broken down by issue group (unresolved first, then ignored/resolved), above a slim
+  sparkline of the per-day trend, with the groups' share of the window's total spelled out
 - Application metrics from Sentry's tracemetrics dataset
 
 The window is a query parameter: `?range=24h` (also `7d`, `14d`, `30d`; default `30d`). Only
