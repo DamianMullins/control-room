@@ -50,6 +50,12 @@ environment in production. `src/lib/config.js` is the single place env is read.
   sparkline of the per-day trend, with the groups' share of the window's total spelled out
 - Application metrics from Sentry's tracemetrics dataset
 
+**Click anything to drill in.** Top-event rows open that event (trend, distinct users, first/last
+seen, top pages); a chart bar opens that bucket (which events, or which error groups, produced
+it); an issue row opens that group (trend, event totals, URLs). The modal fetches
+`/api/detail?kind=event|bucket|issue&range=…` — a JSON endpoint behind the same 5-minute cache —
+closes on Escape, backdrop click or ×, and never reloads the page.
+
 The window is a query parameter: `?range=24h` (also `7d`, `14d`, `30d`; default `30d`). Only
 those four values are accepted, so nothing user-supplied ever reaches a SQL string. The choice
 is remembered in a cookie, so a bare `/` reopens the last window you looked at; 24h is bucketed

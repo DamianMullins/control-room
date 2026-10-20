@@ -31,6 +31,7 @@ export interface VolumePoint {
 }
 
 export interface IssueGroup {
+  id: number;
   shortId: string;
   title: string;
   status: string;
@@ -60,6 +61,7 @@ export interface SentryTiles {
 }
 
 interface RawIssue {
+  id: string | number;
   shortId: string;
   title: string;
   count: string | number;
@@ -72,6 +74,29 @@ interface RawIssue {
 
 type Params = Record<string, string | number | string[] | undefined | null>;
 
+/** Shared Sentry GET. Exported so the detail endpoint can reuse auth and region handling. */
+export async function sentryApi<T>(path: string, params: Params = {}): Promise<T> {
+  const token = env('SENTRY_AUTH_TOKEN');
+  if (!token) throw new Error('SENTRY_AUTH_TOKEN is not set');
+
+  const url = new URL(`${BASE}${path}`);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null) continue;
+    // Repeated params (field=issue&field=count()) carry a string[].
+    if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, item);
+    else url.searchParams.set(k, String(v));
+  }
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`sentry ${path}: HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export const sentryTarget = (): { org: string; project: string; region: string } => {
+  if (!ORG || !PROJECT) throw new Error('SENTRY_ORG and SENTRY_PROJECT must be set');
+  return { org: ORG, project: PROJECT, region: BASE.includes('de.sentry.io') ? 'DE' : 'US' };
+};
+
 export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryTiles> {
   const errors: string[] = [];
   const hourly = isHourly(range);
@@ -79,22 +104,8 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   let calls = 0;
 
   async function api<T>(path: string, params: Params = {}): Promise<T> {
-    const token = env('SENTRY_AUTH_TOKEN');
-    if (!token) throw new Error('SENTRY_AUTH_TOKEN is not set');
-    if (!ORG || !PROJECT) throw new Error('SENTRY_ORG and SENTRY_PROJECT must be set');
-
-    const url = new URL(`${BASE}${path}`);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === undefined || v === null) continue;
-      // Repeated params (field=issue&field=count()) carry a string[].
-      if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, item);
-      else url.searchParams.set(k, String(v));
-    }
-
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     calls += 1;
-    if (!res.ok) throw new Error(`sentry ${path}: HTTP ${res.status}`);
-    return (await res.json()) as T;
+    return sentryApi<T>(path, params);
   }
 
   /** Scalar value of a single-field /events query, or null when it never fired. */
@@ -161,6 +172,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   for (const raw of issues ?? []) {
     const issue = fmtIssue(raw);
     meta.set(issue.shortId, {
+      id: Number(raw.id),
       shortId: issue.shortId,
       title: issue.title,
       status: issue.status,
@@ -182,6 +194,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
   const groups: IssueGroup[] = (grouped?.data ?? []).map((row) => {
     const known = meta.get(row.issue);
     return {
+      id: known?.id ?? row['issue.id'],
       shortId: row.issue,
       title: known?.title ?? row.issue,
       status: known?.status ?? 'unknown',

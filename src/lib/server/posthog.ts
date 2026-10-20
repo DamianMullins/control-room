@@ -63,7 +63,8 @@ export function projects(): Project[] {
   });
 }
 
-async function hogql(projectId: number, sql: string) {
+/** Single HogQL query against one project. Exported so the detail endpoint reuses it. */
+export async function hogql(projectId: number, sql: string) {
   const key = env('POSTHOG_PERSONAL_API_KEY');
   if (!key) throw new Error('POSTHOG_PERSONAL_API_KEY is not set');
 

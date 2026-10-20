@@ -31,11 +31,56 @@
   const stale = $derived(data.posthog.cached && data.sentry.cached);
   const label = $derived(projects.map((p) => p.label).join(' + '));
   const bucketUnit = $derived(range === '24h' ? 'hour' : 'day');
+
+  type Detail = import('#lib/server/detail.js').Detail;
+
+  let detail = $state<Detail | null>(null);
+  let loading = $state(false);
+  let failed = $state<string | null>(null);
+
+  // One endpoint, three kinds. The server caches each answer for 5 minutes, so reopening a
+  // row you just looked at costs no upstream reads.
+  async function open(kind: 'event' | 'bucket' | 'issue', params: Record<string, string>) {
+    const qs = new URLSearchParams({ kind, range, ...params });
+    loading = true;
+    failed = null;
+    detail = null;
+    try {
+      const res = await fetch(`/api/detail?${qs}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      detail = (await res.json()) as Detail;
+    } catch (err) {
+      failed = (err as Error).message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  const close = () => {
+    detail = null;
+    loading = false;
+    failed = null;
+  };
+
+  const seriesMax = (points: { count: number }[]) => Math.max(1, ...points.map((p) => p.count));
+
+  const onEnter = (e: KeyboardEvent, fn: () => void) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fn();
+    }
+  };
 </script>
 
 <svelte:head>
   <title>Control room{label ? ` — ${label}` : ''}</title>
 </svelte:head>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape') close();
+  }}
+/>
 
 <main>
   <header>
@@ -110,7 +155,14 @@
     </h2>
     <div class="chart">
       {#each ph.series as d}
-        <div class="col">
+        <div
+          class="col clickable"
+          role="button"
+          tabindex="0"
+          aria-label="Break down {d.full}"
+          onclick={() => open('bucket', { at: d.full, source: 'events' })}
+          onkeydown={(ev) => onEnter(ev, () => open('bucket', { at: d.full, source: 'events' }))}
+        >
           <div class="stack">
             {#each projects as p, i}
               <div
@@ -139,9 +191,15 @@
       <ul class="rows">
         {#each ph.topEvents as e}
           <li>
-            <code>{e.event}</code>
-            <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
-            <b>{num(e.total)}</b>
+            <button
+              type="button"
+              class="rowbtn row3"
+              onclick={() => open('event', { name: e.event })}
+            >
+              <code>{e.event}</code>
+              <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
+              <b>{num(e.total)}</b>
+            </button>
           </li>
         {:else}
           <li class="empty">No events in this window</li>
@@ -154,7 +212,14 @@
 
       <div class="spark">
         {#each se.errorVolume.series as d}
-          <div class="scol">
+          <div
+            class="scol clickable"
+            role="button"
+            tabindex="0"
+            aria-label="Break down {d.full}"
+            onclick={() => open('bucket', { at: d.full, source: 'errors' })}
+            onkeydown={(ev) => onEnter(ev, () => open('bucket', { at: d.full, source: 'errors' }))}
+          >
             <div class="sbar" style="height:{(d.count / maxErrors) * 100}%"></div>
             <div class="tip" role="tooltip">
               <b>{d.full}</b>
@@ -173,12 +238,16 @@
       <ul class="rows groups">
         {#each se.topIssues as i}
           <li>
-            <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
-            <span class="tag {i.status}">{i.status}</span>
-            <span class="bar-mini"
-              ><i style="width:{barWidth(i.count)}%; background:#f0883e"></i></span
+            <button
+              type="button"
+              class="rowbtn row4"
+              onclick={() => open('issue', { id: String(i.id) })}
             >
-            <b>{num(i.count)}</b>
+              <span class="iwrap">{i.title}</span>
+              <span class="tag {i.status}">{i.status}</span>
+              <span class="bar-mini"><i style="width:{barWidth(i.count)}%; background:#f0883e"></i></span>
+              <b>{num(i.count)}</b>
+            </button>
           </li>
         {:else}
           <li class="empty">No issues in this window</li>
@@ -190,12 +259,16 @@
         <ul class="rows groups dim">
           {#each se.otherIssues as i}
             <li>
-              <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
-              <span class="tag {i.status}">{i.status}</span>
-              <span class="bar-mini"
-                ><i style="width:{barWidth(i.count)}%; background:#6e7681"></i></span
+              <button
+                type="button"
+                class="rowbtn row4 dim"
+                onclick={() => open('issue', { id: String(i.id) })}
               >
-              <b>{num(i.count)}</b>
+                <span class="iwrap">{i.title}</span>
+                <span class="tag {i.status}">{i.status}</span>
+                <span class="bar-mini"><i style="width:{barWidth(i.count)}%; background:#6e7681"></i></span>
+                <b>{num(i.count)}</b>
+              </button>
             </li>
           {/each}
         </ul>
@@ -228,6 +301,84 @@
     {#if data.posthog.errors?.length}<span class="warn">posthog: {data.posthog.errors.join('; ')}</span>{/if}
     {#if data.sentry.errors?.length}<span class="warn">sentry: {data.sentry.errors.join('; ')}</span>{/if}
   </footer>
+
+  {#if loading || detail || failed}
+    <div
+      class="backdrop"
+      role="presentation"
+      onclick={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') close();
+      }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        tabindex="-1"
+        aria-label={detail?.title ?? 'Details'}
+      >
+        <div class="mhead">
+          <div>
+            <h2 class="mtitle">{detail?.title ?? 'Loading…'}</h2>
+            {#if detail?.subtitle}<p class="sub">{detail.subtitle}</p>{/if}
+          </div>
+          <button class="x" onclick={close} aria-label="Close">×</button>
+        </div>
+
+        {#if loading}
+          <p class="dim">Loading…</p>
+        {:else if failed}
+          <p class="warn">Could not load: {failed}</p>
+        {:else if detail}
+          {#if detail.errors.length}
+            <p class="warn">{detail.errors.join('; ')}</p>
+          {/if}
+
+          <div class="mstats">
+            {#each detail.stats as s}
+              <div class="mstat">
+                <span class="label">{s.label}</span>
+                <span class="value">{s.value}</span>
+              </div>
+            {/each}
+          </div>
+
+          {#if detail.series.length}
+            <div class="mseries">
+              {#each detail.series as p}
+                <div class="mcol" title="{p.full}: {p.count}">
+                  <div
+                    class="mbar"
+                    style="height:{Math.max(2, (p.count / seriesMax(detail.series)) * 100)}%"
+                  ></div>
+                </div>
+              {/each}
+            </div>
+            <p class="spark-axis">
+              <span>{detail.series[0].full}</span>
+              <span>{detail.series[detail.series.length - 1].full}</span>
+            </p>
+          {/if}
+
+          {#if detail.rows.length}
+            <h3>{detail.rowsTitle}</h3>
+            <ul class="rows plain">
+              {#each detail.rows as r}
+                <li><div class="row2"><span class="iwrap">{r.label}</span><b>{r.value}</b></div></li>
+              {/each}
+            </ul>
+          {/if}
+
+          {#if detail.link}
+            <a class="ext" href={detail.link} target="_blank" rel="noreferrer">Open in source →</a>
+          {/if}
+        {/if}
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -284,7 +435,7 @@
   .scol:hover .tip { opacity: 1; }
   .spark-axis { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: #6e7681; margin: 4px 0 16px; }
   .rows li.empty { color: #6e7681; font-size: 12px; display: block; }
-  .rows.dim a, .rows.dim b { color: #8b949e; }
+  .rows.dim b { color: #8b949e; }
 
   .tip {
     position: absolute;
@@ -314,9 +465,15 @@
   .col:hover .tip { opacity: 1; }
 
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .rows li { display: grid; grid-template-columns: 1fr 90px 56px; align-items: center; gap: 10px; font-size: 13px; }
-  /* Issue rows carry a bar between the status pill and the count, sized by event volume. */
-  .rows.groups li { grid-template-columns: 1fr 92px 140px 46px; }
+  .rows li { font-size: 13px; }
+  /* Rows are real buttons so the whole line is keyboard-operable. */
+  .rowbtn { display: grid; align-items: center; gap: 10px; width: 100%; margin: 0 -6px; padding: 3px 6px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .rowbtn:hover { background: #1c2129; }
+  .rowbtn:focus-visible { outline: 2px solid #1f6feb; outline-offset: 1px; }
+  .row3 { grid-template-columns: 1fr 90px 56px; }
+  .row4 { grid-template-columns: 1fr 92px 140px 46px; }
+  .row2 { display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 10px; }
+  .rowbtn.dim { color: #8b949e; }
   .rows.groups .tag { justify-self: start; white-space: nowrap; font-size: 9.5px; padding: 1px 5px; }
   .rows code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rows b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -334,6 +491,47 @@
 
   footer { margin-top: 20px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: #6e7681; }
   .warn { color: #f0883e; }
+
+  .iwrap { overflow: hidden; text-overflow: ellipsis; }
+
+  /* Chart bars are buttons too: click a bucket to see what was inside it. */
+  .col.clickable, .scol.clickable { cursor: pointer; }
+  .col.clickable:hover .bar, .scol.clickable:hover .sbar { filter: brightness(1.3); }
+  .col.clickable:focus-visible, .scol.clickable:focus-visible { outline: 2px solid #1f6feb; outline-offset: 1px; }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 16px;
+    overflow: auto;
+    background: #000a;
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    width: min(760px, 100%);
+    padding: 18px 20px 22px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    box-shadow: 0 24px 60px #000c;
+  }
+  .mhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .mtitle { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0; text-transform: none; color: #e6edf3; }
+  .x { width: 28px; height: 28px; border-radius: 7px; border: 1px solid #30363d; background: #21262d; color: #8b949e; font-size: 16px; line-height: 1; cursor: pointer; }
+  .x:hover { color: #e6edf3; border-color: #8b949e; }
+  .mstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .mstat { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; }
+  .mstat .label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; }
+  .mstat .value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .mseries { display: flex; align-items: flex-end; gap: 2px; height: 90px; }
+  .mcol { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .mbar { width: 100%; min-height: 1px; background: #58a6ff; border-radius: 1px; }
+  .rows.plain li { display: block; }
+  .ext { display: inline-block; margin-top: 14px; font-size: 12px; }
 
   @media (max-width: 860px) {
     .kpis, .metrics { grid-template-columns: repeat(2, 1fr); }
