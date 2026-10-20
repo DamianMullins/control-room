@@ -164,12 +164,12 @@
       </div>
       <p class="note">
         counts events, not issues — ignore-scan noise is included, which is why it dwarfs the
-        unresolved count above
+        unresolved count below
       </p>
 
-      <h3>Top issues · {range}</h3>
+      <h3>Unresolved · {se.unresolved.count} in {range}</h3>
       <ul class="rows">
-        {#each se.topIssues.slice(0, 6) as i}
+        {#each se.topIssues as i}
           <li>
             <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
             <span class="tag {i.status}">{i.status}</span>
@@ -179,6 +179,19 @@
           <li class="empty">No issues in this window</li>
         {/each}
       </ul>
+
+      {#if se.otherIssues.length}
+        <h3>Not unresolved — what the error chart counts</h3>
+        <ul class="rows dim">
+          {#each se.otherIssues as i}
+            <li>
+              <a href={i.permalink} target="_blank" rel="noreferrer">{i.title}</a>
+              <span class="tag {i.status}">{i.status}</span>
+              <b>{num(i.count)}</b>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </article>
   </section>
 
@@ -252,6 +265,7 @@
   /* 24 hourly labels will not fit in the narrow chart — thin every other one. */
   .chart.dense .col:nth-child(2n) .tick { visibility: hidden; }
   .rows li.empty { color: #6e7681; font-size: 12px; display: block; }
+  .rows.dim a, .rows.dim b { color: #8b949e; }
 
   .tip {
     position: absolute;

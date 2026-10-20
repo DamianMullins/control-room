@@ -34,6 +34,8 @@ export interface SentryTiles {
   project: string;
   region: string;
   topIssues: SentryIssue[];
+  /** Ignored/resolved groups, highest-frequency first — the noise behind the error chart. */
+  otherIssues: SentryIssue[];
   /**
    * Issue GROUPS, not events: `count` is how many groups are unresolved and `events`
    * is what those groups contain. The error-volume tile counts EVENTS, so the two
@@ -108,6 +110,7 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
     project: `${ORG ?? ''}/${PROJECT ?? ''}`,
     region: BASE.includes('de.sentry.io') ? 'DE' : 'US',
     topIssues: [],
+    otherIssues: [],
     unresolved: { count: 0, events: 0, issues: [] },
     errorVolume: { d24h: null, total: null, series: [] },
     metrics: [],
@@ -138,7 +141,11 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
       sort: 'freq',
     })
   );
-  if (issues) out.topIssues = issues.map(fmtIssue);
+  if (issues) {
+    out.topIssues = issues.map(fmtIssue);
+    // Everything that is NOT unresolved: the crawler noise the error chart is full of.
+    out.otherIssues = out.topIssues.filter((i) => i.status !== 'unresolved').slice(0, 3);
+  }
 
   const unresolved = await settle('unresolved', () =>
     api<RawIssue[]>(`/projects/${ORG}/${PROJECT}/issues/`, {
@@ -152,6 +159,9 @@ export async function sentryTiles(range: Range = DEFAULT_RANGE): Promise<SentryT
     out.unresolved.count = unresolved.length;
     out.unresolved.events = unresolved.reduce((n, i) => n + Number(i.count), 0);
     out.unresolved.issues = unresolved.slice(0, 5).map(fmtIssue);
+    // The rendered list must be the same set the KPI counts, or the tile contradicts itself:
+    // sorting all statuses by frequency drops the lowest-count unresolved group off the end.
+    out.topIssues = unresolved.map(fmtIssue).slice(0, 10);
   }
 
   // Error volume: an unfiltered EVENTS count, which is why it dwarfs the issue count —
