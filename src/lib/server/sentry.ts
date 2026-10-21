@@ -95,23 +95,6 @@ type Params = Record<string, string | number | string[] | undefined | null>;
  * Application Metrics per project, keyed by the project's `key`. A project with no entry gets
  * no metric rows — better than four rows of em-dashes that look like a broken query.
  */
-// Metric names are stored verbatim, dots included: `action.completed` is emitted by the
-// Next.js SDK as `action.completed`, and the underscore form silently answers 0.
-const METRICS: Record<string, { label: string; field: string }[]> = {
-  projectB: [
-    { label: 'API calls', field: 'count(value,api.completed,counter,none)' },
-    { label: 'Cache hits', field: 'count(value,cache.hit,counter,none)' },
-    { label: 'Views recorded', field: 'count(value,views.recorded,counter,none)' },
-    { label: 'API p95 (ms)', field: 'p95(value,api.duration,distribution,millisecond)' },
-  ],
-  projectA: [
-    { label: 'Articles saved', field: 'count(value,articles_saved,counter,none)' },
-    { label: 'Save duration p95 (s)', field: 'p95(value,save_duration,distribution,none)' },
-    { label: 'Queue save p95 (ms)', field: 'p95(value,queue_save_ms,distribution,none)' },
-    { label: 'Queue depth (max)', field: 'max(value,queue_depth,gauge,none)' },
-  ],
-};
-
 export function sentryProjects(): SentryProjectRef[] {
   const raw = env('SENTRY_PROJECTS');
   if (raw) {
@@ -209,6 +192,27 @@ export async function sentryTiles(
     errors,
   };
 
+  // Application Metrics are declared in the environment so no product is named in the code:
+  //   SENTRY_METRICS_<KEY>="Label=count(value,name,counter,none);Other=p95(value,x,distribution,millisecond)"
+  // A malformed MRI is skipped and surfaced in `errors` rather than breaking the whole page.
+  const MRI = /^(count|sum|avg|min|max|p\d{1,2})\(value,[A-Za-z0-9_.-]+,[a-z]+,[a-z]+\)$/;
+  const metricRows = (ref: SentryProjectRef): { label: string; field: string }[] => {
+    const name = `SENTRY_METRICS_${ref.key.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+    const raw = env(name);
+    if (!raw) return [];
+    const rows: { label: string; field: string }[] = [];
+    for (const chunk of raw.split(';')) {
+      const [label, field] = chunk.split('=').map((part) => part.trim());
+      if (!label || !field) continue;
+      if (!MRI.test(field)) {
+        errors.push(`${ref.key}/metrics: ignoring "${field}" — expected count(value,name,type,unit)`);
+        continue;
+      }
+      rows.push({ label, field });
+    }
+    return rows;
+  };
+
   const settle = async <T>(label: string, fn: () => Promise<T>): Promise<T | null> => {
     try {
       return await fn();
@@ -224,9 +228,9 @@ export async function sentryTiles(
   const issueWindow = hourly ? `lastSeen:-${window}h` : `lastSeen:-${window / 24}d`;
   const issueStatsPeriod = hourly ? '24h' : '14d';
 
-  // Orgs can hold several projects (an org can hold more than one project), and the
-  // org-wide events endpoints return data for all of them. Resolve each project's numeric id
-  // once per process and filter, so a tile can never be a blend of two products.
+  // An org can hold several projects, and the org-wide events endpoints return data for all
+  // of them. Resolve each project's numeric id once per process and filter, so a tile can never
+  // be a blend of two products.
   const ids = new Map<string, string | undefined>();
   const projectId = async (ref: SentryProjectRef): Promise<string | undefined> => {
     const key = `${ref.org}/${ref.project}`;
@@ -351,7 +355,7 @@ export async function sentryTiles(
     }
 
     // Application metrics, only for projects that declare them.
-    for (const metric of METRICS[ref.key] ?? []) {
+    for (const metric of metricRows(ref)) {
       const body = await settle(`${ref.key}/${metric.field}`, () =>
         api<{ data?: Record<string, number>[] }>(`/organizations/${ref.org}/events/`, {
           dataset: 'tracemetrics',
