@@ -97,6 +97,28 @@ free: the 5-minute cache is keyed on both.
 they contain; the error chart counts *events*, including ignored bot-scan groups. The two
 numbers are different units, which is why they look unrelated.
 
+## Switching is cheap
+
+A render costs several seconds of upstream calls, so the page is built to make navigation feel
+instant rather than to re-query:
+
+- **Per-slice cache, keyed `source:range:project`**, 5 minutes. Switching back to a slice is a
+  cache hit (measured: ~100ms click-to-new-numbers) and it never touches PostHog or Sentry.
+- **Background warming.** Rendering the merged view also renders each project's slice for the
+  same range, fire-and-forget, so the first click on a project is already warm. That is the one
+  place the dashboard spends extra reads: one range's worth of extra queries per TTL.
+- **In-flight de-duplication.** A hover preload followed by the click, or a fast double-click on
+  a tab, joins the promise already running instead of firing a second round of calls.
+- **Hover preload** (`data-sveltekit-preload-data="hover"`) starts the render for a tab before it
+  is clicked, which is what makes an uncached range bearable — it hides most of the first load.
+- **A loading state, honestly.** While a navigation is in flight a 2px progress bar sweeps, the
+  content dims to 55%, and `aria-busy` is set. SvelteKit keeps the previous render on screen until
+  the new data arrives, so dimming is what stops stale numbers reading as the answer.
+  `prefers-reduced-motion` swaps the sweep for a static bar.
+
+Cold cost, for reference: a range never rendered takes ~8s (that is every PostHog query plus the
+Sentry calls), which is exactly why the warmer and the preload exist.
+
 ## Deploy (macOS, launchd)
 
 Runs as a LaunchAgent so it restarts on crash and survives reboot. `start.sh` sources

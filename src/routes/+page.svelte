@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { navigating } from '$app/state';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -93,7 +94,9 @@
   }}
 />
 
-<main>
+<div class="progress" class:on={!!navigating.to} aria-hidden="true"><i></i></div>
+
+<main class:busy={!!navigating.to} aria-busy={navigating.to ? 'true' : undefined}>
   <header>
     <div>
       <h1>Control room</h1>
@@ -115,12 +118,14 @@
       <nav class="ranges" aria-label="Project">
         <a
           href="?range={range}"
+          data-sveltekit-preload-data="hover"
           class:active={!data.selected}
           aria-current={!data.selected ? 'true' : undefined}>all</a
         >
         {#each data.projects as option}
           <a
             href="?range={range}&project={option.key}"
+            data-sveltekit-preload-data="hover"
             class:active={data.selected === option.key}
             aria-current={data.selected === option.key ? 'true' : undefined}>{option.label}</a
           >
@@ -131,6 +136,7 @@
         {#each data.ranges as option}
           <a
             href="?range={option}{data.selected ? `&project=${data.selected}` : ''}"
+            data-sveltekit-preload-data="hover"
             class:active={option === range}
             aria-current={option === range ? 'true' : undefined}>{option}</a
           >
@@ -456,6 +462,16 @@
 </main>
 
 <style>
+  /* Switching project or range is a server render; this is the "something is happening" signal. */
+  .progress { position: fixed; inset: 0 0 auto; height: 2px; z-index: 40; opacity: 0; transition: opacity 0.15s ease; }
+  .progress.on { opacity: 1; }
+  .progress i { display: block; height: 100%; width: 40%; background: linear-gradient(90deg, transparent, #58a6ff, transparent); animation: sweep 1s linear infinite; }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
+  @media (prefers-reduced-motion: reduce) { .progress i { animation: none; width: 100%; opacity: 0.6; } }
+  /* SvelteKit keeps the previous render on screen while the next one loads; dim it so the
+     numbers read as stale rather than as the answer for the page you just clicked. */
+  main.busy { opacity: 0.55; transition: opacity 0.12s ease; }
+
   :global(body) {
     margin: 0;
     background: #0d1117;

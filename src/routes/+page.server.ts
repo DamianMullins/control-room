@@ -48,6 +48,19 @@ export const load: PageServerLoad = async ({ url, cookies }) => {
     cached(`sentry:${range}:${selected ?? 'all'}`, TTL, () => sentryTiles(range, only)),
   ]);
 
+  // Warm each project's slice in the background so switching is a cache hit even without a
+  // hover preload (touch, keyboard, a bookmarked ?project= URL). Fire and forget, and never
+  // awaited: a failure here must not touch the response. This is why the merged view costs a
+  // few extra reads once per TTL rather than a slow first switch.
+  if (!selected) {
+    for (const option of options) {
+      void Promise.all([
+        cached(`posthog:${range}:${option.key}`, TTL, () => posthogTiles(range, [option.key])),
+        cached(`sentry:${range}:${option.key}`, TTL, () => sentryTiles(range, [option.key])),
+      ]).catch(() => {});
+    }
+  }
+
   return {
     posthog,
     sentry,
