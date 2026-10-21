@@ -60,7 +60,19 @@ environment in production. `src/lib/config.js` is the single place env is read.
 - Top events, merged across projects
 - Error events broken down by issue group (unresolved first, then ignored/resolved), above a slim
   sparkline of the per-day trend, with the groups' share of the window's total spelled out
-- Application metrics from Sentry's tracemetrics dataset
+- Application metrics from Sentry's tracemetrics dataset, for the projects that declare them
+
+**Application Metrics are declared per project, in code.** `METRICS` in
+`src/lib/server/sentry.ts` maps a project key to `{ label, field }` rows, where `field` is the
+MRI exactly as Sentry stored it — `count(value,api.completed,counter,none)` for a counter,
+`p95(value,api.duration,distribution,millisecond)` for a distribution. Keep the dots: the
+Next.js SDK registers `api.completed` verbatim, and querying the underscore form returns a
+silent zero. A project with no entry simply contributes no metric rows.
+
+Those queries are org-wide endpoints, so each one is filtered by the project's numeric id
+(resolved once per process from `/projects/{org}/{project}/`). An org can hold more than one
+project — an org can hold more than one project — and without the filter a tile would blend
+both. The id lookup counts towards the "Sentry calls" figure in the footer.
 
 **Click anything to drill in.** Top-event rows open that event (trend, distinct users, first/last
 seen, top pages); a chart bar opens that bucket (which events, or which error groups, produced

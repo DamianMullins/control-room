@@ -95,7 +95,15 @@ type Params = Record<string, string | number | string[] | undefined | null>;
  * Application Metrics per project, keyed by the project's `key`. A project with no entry gets
  * no metric rows — better than four rows of em-dashes that look like a broken query.
  */
+// Metric names are stored verbatim, dots included: `action.completed` is emitted by the
+// Next.js SDK as `action.completed`, and the underscore form silently answers 0.
 const METRICS: Record<string, { label: string; field: string }[]> = {
+  projectB: [
+    { label: 'API calls', field: 'count(value,api.completed,counter,none)' },
+    { label: 'Cache hits', field: 'count(value,cache.hit,counter,none)' },
+    { label: 'Views recorded', field: 'count(value,views.recorded,counter,none)' },
+    { label: 'API p95 (ms)', field: 'p95(value,api.duration,distribution,millisecond)' },
+  ],
   projectA: [
     { label: 'Articles saved', field: 'count(value,articles_saved,counter,none)' },
     { label: 'Save duration p95 (s)', field: 'p95(value,save_duration,distribution,none)' },
@@ -216,6 +224,21 @@ export async function sentryTiles(
   const issueWindow = hourly ? `lastSeen:-${window}h` : `lastSeen:-${window / 24}d`;
   const issueStatsPeriod = hourly ? '24h' : '14d';
 
+  // Orgs can hold several projects (an org can hold more than one project), and the
+  // org-wide events endpoints return data for all of them. Resolve each project's numeric id
+  // once per process and filter, so a tile can never be a blend of two products.
+  const ids = new Map<string, string | undefined>();
+  const projectId = async (ref: SentryProjectRef): Promise<string | undefined> => {
+    const key = `${ref.org}/${ref.project}`;
+    if (ids.has(key)) return ids.get(key);
+    const id = await settle(`${ref.key}/project`, () => {
+      calls += 1;
+      return sentryApi<{ id?: string }>(ref, `/projects/${ref.org}/${ref.project}/`);
+    });
+    ids.set(key, id?.id);
+    return id?.id;
+  };
+
   const groups: IssueGroup[] = [];
   const seriesByFull = new Map<string, number>();
 
@@ -224,6 +247,7 @@ export async function sentryTiles(
       calls += 1;
       return sentryApi<T>(ref, path, params);
     };
+    const pid = await projectId(ref);
 
     const issues = await settle(`${ref.key}/issues`, () =>
       api<RawIssue[]>(`/projects/${ref.org}/${ref.project}/issues/`, {
@@ -294,6 +318,7 @@ export async function sentryTiles(
         dataset: 'errors',
         field: 'count()',
         statsPeriod: '24h',
+        project: pid,
       })
     );
     const total = await settle(`${ref.key}/errors`, () =>
@@ -301,6 +326,7 @@ export async function sentryTiles(
         dataset: 'errors',
         field: 'count()',
         statsPeriod: range,
+        project: pid,
       })
     );
     out.errorVolume.d24hByProject[ref.key] = d24h?.data?.[0]?.['count()'] ?? 0;
@@ -314,6 +340,7 @@ export async function sentryTiles(
           yAxis: 'count()',
           statsPeriod: range,
           interval: hourly ? '1h' : '1d',
+          project: pid,
         }
       )
     );
@@ -330,6 +357,7 @@ export async function sentryTiles(
           dataset: 'tracemetrics',
           field: metric.field,
           statsPeriod: range,
+          project: pid,
         })
       );
       const value = body?.data?.[0]?.[metric.field];

@@ -25,8 +25,13 @@
   const nf = new Intl.NumberFormat('en-GB');
   const num = (v: number | null | undefined): string =>
     v === null || v === undefined ? '—' : nf.format(Math.round(v * 100) / 100);
-  const dec = (v: number | null | undefined): number | string =>
-    v === null || v === undefined ? '—' : Math.round(v * 100) / 100;
+  // Integers get thousands separators, anything fractional keeps two decimals: a metric tile
+  // reading 56,478 is easier to sanity-check than 56478.
+  const dec = (v: number | null | undefined): string => {
+    if (v === null || v === undefined) return '—';
+    if (Number.isInteger(v)) return v.toLocaleString('en-GB');
+    return v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
 
   const stale = $derived(data.posthog.cached && data.sentry.cached);
   const label = $derived(projects.map((p) => p.label).join(' + '));
