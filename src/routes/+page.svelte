@@ -260,7 +260,20 @@
               class="rowbtn row3"
               onclick={() => open('event', { name: e.event })}
             >
-              <code>{e.event}</code>
+              <span class="iwrap">
+                <code>{e.event}</code>
+                {#if multi}
+                  <span class="ptags">
+                    {#each projects as p, i}
+                      {#if (e.byProject[p.key] ?? 0) > 0}
+                        <span class="ptag" title="{p.label}: {num(e.byProject[p.key])}">
+                          <i style="background:{colour(i)}"></i><span class="plabel">{p.label}</span>
+                        </span>
+                      {/if}
+                    {/each}
+                  </span>
+                {/if}
+              </span>
               <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
               <b>{num(e.total)}</b>
             </button>
@@ -596,6 +609,12 @@
   .ititle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .proj { flex: none; font-size: 9.5px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em; }
 
+  /* Which project a top event came from. Colour matches the chart legend, and the count
+     lives in the tooltip so the row stays one line. Only rendered in the merged view. */
+  .ptags { flex: none; display: inline-flex; gap: 7px; align-items: center; min-width: 0; }
+  .ptag { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  .ptag i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
+
   /* Chart bars are buttons too: click a bucket to see what was inside it. */
   .col.clickable, .scol.clickable { cursor: pointer; }
   .col.clickable:hover .bar, .scol.clickable:hover .sbar { filter: brightness(1.3); }
@@ -655,6 +674,10 @@
     .row4 { grid-template-columns: 1fr 82px 42px; }
     .row4 .bar-mini { display: none; }
     .row3 { grid-template-columns: 1fr 56px 44px; }
+    /* Two project names will not fit beside an event name at this width; the coloured dots
+       stay, and they are the same colours as the chart legend above. */
+    .plabel { display: none; }
+    .ptags { gap: 5px; }
     .rows.groups .tag { font-size: 8.5px; padding: 1px 4px; }
     .chart { gap: 3px; }
     /* 30 day labels cannot fit across 350px — show every fifth one. */
