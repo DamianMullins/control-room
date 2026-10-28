@@ -274,7 +274,19 @@
                   </span>
                 {/if}
               </span>
-              <span class="bar-mini"><i style="width:{(e.total / maxEvent) * 100}%"></i></span>
+              <span class="bar-mini">
+                <i style="width:{(e.total / maxEvent) * 100}%">
+                  {#each projects as p, i}
+                    {#if (e.byProject[p.key] ?? 0) > 0}
+                      <span
+                        class="seg"
+                        style="width:{((e.byProject[p.key] ?? 0) / Math.max(1, e.total)) * 100}%; background:{colour(i)}"
+                        title="{p.label}: {num(e.byProject[p.key])}"
+                      ></span>
+                    {/if}
+                  {/each}
+                </i>
+              </span>
               <b>{num(e.total)}</b>
             </button>
           </li>
@@ -588,7 +600,10 @@
   .rows code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rows b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
   .bar-mini { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
-  .bar-mini i { display: block; height: 100%; background: #58a6ff; }
+  .bar-mini i { display: flex; height: 100%; background: #58a6ff; }
+  /* Stacked per project, same colours as the chart legend: the tag says which products an
+     event came from, this says in what proportion. */
+  .bar-mini .seg { display: block; height: 100%; }
   .tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; border: 1px solid #30363d; border-radius: 999px; padding: 1px 6px; text-align: center; }
   .tag.unresolved { color: #f0883e; border-color: #6b3b0f; }
   .tag.ignored { color: #6e7681; }
