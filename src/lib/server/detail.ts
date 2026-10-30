@@ -71,26 +71,37 @@ export async function eventDetail(
 
   for (const project of list) {
     try {
-      const [series, totals, paths] = await Promise.all([
+      // Window stats and lifetime bounds are separate queries. A count without a
+      // timestamp filter is a lifetime total (so "distinct users · 30d" would lie),
+      // and min() over a project that holds none of these events answers the epoch,
+      // which drags a merged "first seen" back to 1970.
+      const [series, totals, paths, bounds] = await Promise.all([
         hogql(project.id, `SELECT ${bucket} AS b, count() AS n FROM events WHERE ${where} GROUP BY b ORDER BY b`),
         hogql(
           project.id,
-          `SELECT count() AS n, count(DISTINCT distinct_id) AS users, min(timestamp) AS first, max(timestamp) AS last
-           FROM events WHERE event = '${esc(name)}'`
+          `SELECT count() AS n, count(DISTINCT distinct_id) AS users FROM events WHERE ${where}`
         ),
         hogql(
           project.id,
           `SELECT properties.$pathname AS p, count() AS n FROM events WHERE ${where}
            GROUP BY p ORDER BY n DESC LIMIT 8`
         ),
+        hogql(
+          project.id,
+          `SELECT min(timestamp) AS first, max(timestamp) AS last
+           FROM events WHERE event = '${esc(name)}'`
+        ),
       ]);
       per[project.key] = series.rows;
       perPaths[project.key] = paths.rows;
       users += Number(totals.rows[0]?.[1] ?? 0);
-      const f = String(totals.rows[0]?.[2] ?? '');
-      const l = String(totals.rows[0]?.[3] ?? '');
-      if (f && (!first || f < first)) first = f;
-      if (l && (!last || l > last)) last = l;
+      // Only a project that actually holds this event may set its bounds.
+      if (Number(totals.rows[0]?.[0] ?? 0) > 0) {
+        const f = String(bounds.rows[0]?.[0] ?? '');
+        const l = String(bounds.rows[0]?.[1] ?? '');
+        if (f && (!first || f < first)) first = f;
+        if (l && (!last || l > last)) last = l;
+      }
     } catch (err) {
       errors.push(`${project.key}: ${(err as Error).message}`);
     }
@@ -115,9 +126,9 @@ export async function eventDetail(
     subtitle: `${list.map((p) => p.label).join(' + ')} · ${range}`,
     stats: [
       { label: `Events · ${range}`, value: num(total) },
-      { label: 'Distinct users (summed)', value: num(users) },
-      { label: 'First seen', value: first.slice(0, 16).replace('T', ' ') || '—' },
-      { label: 'Last seen', value: last.slice(0, 16).replace('T', ' ') || '—' },
+      { label: `Distinct users · ${range} (summed)`, value: num(users) },
+      { label: 'First seen (any time)', value: first.slice(0, 16).replace('T', ' ') || '—' },
+      { label: 'Last seen (any time)', value: last.slice(0, 16).replace('T', ' ') || '—' },
     ],
     series,
     rowsTitle: 'Top pages',
